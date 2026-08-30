@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "560855009957",
+    "project_id": "travelease-d9f90",
+    "storage_bucket": "travelease-d9f90.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:560855009957:android:39c2ba355e2bd71458db4c",
+        "android_client_info": {
+          "package_name": "com.example.travel_plan"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCqCljaLRXKzyJiDZyrQQmUOzn1QR-peX4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../app_routes.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/auth_service.dart';
 
 class LoginRegisterScreen extends StatefulWidget {
   const LoginRegisterScreen({super.key});
-
   @override
   State<LoginRegisterScreen> createState() => _LoginRegisterScreenState();
 }
@@ -13,7 +14,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen> {
   bool _isLogin = true;
   bool _obscurePassword = true;
   bool _isLoading = false;
-
+  final AuthService _authService = AuthService();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -36,22 +37,134 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen> {
   }
 
   Future<void> _submitForm() async {
-    FocusScope.of(context).unfocus(); // Dismiss keyboard
+    FocusScope.of(context).unfocus();
 
-    if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
 
-      // Simulate network request delay
-      await Future.delayed(const Duration(seconds: 1));
+    setState(() => _isLoading = true);
+
+    try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+
+      if (_isLogin) {
+        // Login
+        await _authService.login(
+          email,
+          password,
+        );
+      } else {
+        // Register
+        await _authService.register(
+          _nameController.text.trim(),
+          email,
+          password,
+        );
+      }
 
       if (!mounted) return;
-      setState(() => _isLoading = false);
 
-      // Navigate to Home Screen
-      Navigator.pushReplacementNamed(context, AppRoutes.home);
+      Navigator.pushReplacementNamed(
+        context,
+        AppRoutes.home,
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message;
+
+      switch (e.code) {
+        case 'user-not-found':
+          message = 'No account found with this email.';
+          break;
+
+        case 'wrong-password':
+        case 'invalid-credential':
+          message = 'Invalid email or password.';
+          break;
+
+        case 'email-already-in-use':
+          message = 'An account already exists with this email.';
+          break;
+
+        case 'weak-password':
+          message = 'Password is too weak.';
+          break;
+
+        case 'invalid-email':
+          message = 'Please enter a valid email address.';
+          break;
+
+        default:
+          message = 'Authentication failed. Please try again.';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Something went wrong. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
+  Future<void> _sendPasswordReset() async {
+    final email = _emailController.text.trim();
 
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter your email address first.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      await _authService.resetPassword(email);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Password reset email sent. Please check your inbox.',
+          ),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message;
+
+      switch (e.code) {
+        case 'invalid-email':
+          message = 'Please enter a valid email address.';
+          break;
+
+        case 'user-not-found':
+          message = 'No account found with this email.';
+          break;
+
+        default:
+          message = 'Could not send password reset email.';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -198,12 +311,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen> {
                     if (_isLogin)
                       Align(
                         alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Password reset link sent to email.')),
-                            );
-                          },
+                        child: TextButton(onPressed: _sendPasswordReset,
                           child: const Text('Forgot Password?'),
                         ),
                       ),
