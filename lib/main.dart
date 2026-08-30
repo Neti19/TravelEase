@@ -1,24 +1,34 @@
 import 'package:flutter/material.dart';
-import 'screen/home_screen.dart';
+import 'app_routes.dart';
 
 void main() {
-  runApp(const TripManagementApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const TravelPlannerApp());
 }
 
-class TripManagementApp extends StatelessWidget {
-  const TripManagementApp({super.key});
+class TravelPlannerApp extends StatelessWidget {
+  const TravelPlannerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Travel Planner',
       debugShowCheckedModeBanner: false,
-      title: "Trip Management System",
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1E88E5),
+          brightness: Brightness.light,
+        ),
+        useMaterial3: true,
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 0,
+        ),
       ),
-      home: const HomeScreen(),
+      // Set initial screen route
+      initialRoute: AppRoutes.login,
+      // Connect dynamic routing handler
+      onGenerateRoute: AppRoutes.generateRoute,
     );
   }
 }
-
-  
