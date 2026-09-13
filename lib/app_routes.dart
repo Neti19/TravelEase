@@ -5,7 +5,7 @@ import 'screens/auth/login_register_screen.dart';
 
 // Home Screen
 import 'screens/home/home_screen.dart';
-
+import 'screens/expense/expense_tracker_screen.dart';
 // Planning Screens
 import 'screens/planning/trip_details_screen.dart';
 import 'screens/planning/select_destination_screen.dart';
@@ -39,7 +39,7 @@ class AppRoutes {
   static const String customizeItinerary = '/customize-itinerary';
   static const String notifications = '/notifications';
   static const String mapNavigation = '/map-navigation';
-
+  static const String expenseTracker = '/expense-tracker';
   static Route<dynamic> generateRoute(RouteSettings settings) {
     switch (settings.name) {
       case login:
@@ -70,6 +70,10 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => const NotificationsScreen());
       case mapNavigation:
         return MaterialPageRoute(builder: (_) => const MapNavigationScreen());
+      case expenseTracker:
+        return MaterialPageRoute(
+          builder: (_) => const ExpenseTrackerScreen(),
+        );
       default:
         return MaterialPageRoute(
           builder: (_) => const Scaffold(
