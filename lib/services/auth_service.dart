@@ -32,10 +32,11 @@ throw Exception('User registration failed.');
 
 // Create UserModel
 final UserModel userModel = UserModel(
-uid: user.uid,
-name: name,
-email: email,
-createdAt: DateTime.now(),
+  uid: user.uid,
+  name: name,
+  email: email,
+  createdAt: DateTime.now(),
+  role: 'user',
 );
 
 // Save user information in Firestore

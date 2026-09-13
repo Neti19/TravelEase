@@ -110,6 +110,14 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
     }
   }
 
+  void _goHome() {
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/home',
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -118,6 +126,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.my_location),
+            tooltip: 'Center Location',
             onPressed: () {
               if (_markers.isNotEmpty && _mapController != null) {
                 _mapController!.animateCamera(
@@ -125,6 +134,11 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                 );
               }
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.home),
+            tooltip: 'Go to Home',
+            onPressed: _goHome,
           ),
         ],
       ),
@@ -168,17 +182,32 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(16),
         color: Colors.white,
-        child: ElevatedButton.icon(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Starting Turn-by-Turn Navigation...')),
-            );
-          },
-          icon: const Icon(Icons.navigation),
-          label: const Text('Start Navigation'),
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(double.infinity, 48),
-          ),
+        child: Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: _goHome,
+              icon: const Icon(Icons.home),
+              label: const Text('Home'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(100, 48),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Starting Turn-by-Turn Navigation...')),
+                  );
+                },
+                icon: const Icon(Icons.navigation),
+                label: const Text('Start Navigation'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -190,18 +219,24 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.map_outlined, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
+          children: [
+            const Icon(Icons.map_outlined, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            const Text(
               'Unable to Load Google Maps JS SDK',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            SizedBox(height: 8),
-            Text(
+            const SizedBox(height: 8),
+            const Text(
               'Please check web/index.html and ensure the Google Maps script tag is added.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _goHome,
+              icon: const Icon(Icons.home),
+              label: const Text('Back to Home'),
             ),
           ],
         ),
