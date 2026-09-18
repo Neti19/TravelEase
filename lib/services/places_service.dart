@@ -1,21 +1,26 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+
 import '../config/api_keys.dart';
 
 class PlacesService {
-  
   static String get _apiKey => ApiKeys.placesApiKey;
-  static const String _baseUrl = 'https://places.googleapis.com/v1';
+
+  static const String _baseUrl =
+      'https://places.googleapis.com/v1';
 
   void _checkKey() {
     if (_apiKey.isEmpty) {
       throw Exception(
-        'Places API key is missing. Run Flutter with --dart-define=PLACES_API_KEY=YOUR_KEY',
+        'Places API key is missing.',
       );
     }
   }
 
-  Future<List<Map<String, dynamic>>> autocomplete(String input) async {
+  Future<List<Map<String, dynamic>>> autocomplete(
+    String input,
+  ) async {
     _checkKey();
 
     final response = await http.post(
@@ -24,7 +29,9 @@ class PlacesService {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': _apiKey,
         'X-Goog-FieldMask':
-            'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text,suggestions.placePrediction.structuredFormat',
+            'suggestions.placePrediction.placeId,'
+            'suggestions.placePrediction.text.text,'
+            'suggestions.placePrediction.structuredFormat',
       },
       body: jsonEncode({
         'input': input,
@@ -34,37 +41,63 @@ class PlacesService {
 
     if (response.statusCode != 200) {
       throw Exception(
-        'Places autocomplete failed (${response.statusCode}): ${response.body}',
+        'Places autocomplete failed '
+        '(${response.statusCode}): ${response.body}',
       );
     }
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final suggestions = data['suggestions'] as List<dynamic>? ?? [];
+    final data =
+        jsonDecode(response.body) as Map<String, dynamic>;
+
+    final suggestions =
+        data['suggestions'] as List<dynamic>? ?? [];
 
     return suggestions
-        .where((item) => item['placePrediction'] != null)
+        .where(
+          (item) => item['placePrediction'] != null,
+        )
         .map((item) {
           final prediction =
-              item['placePrediction'] as Map<String, dynamic>;
-          final text = prediction['text'] as Map<String, dynamic>?;
+              item['placePrediction']
+                  as Map<String, dynamic>;
+
+          final text =
+              prediction['text']
+                  as Map<String, dynamic>?;
+
           final structured =
-              prediction['structuredFormat'] as Map<String, dynamic>?;
-          final mainText = structured?['mainText'] as Map<String, dynamic>?;
+              prediction['structuredFormat']
+                  as Map<String, dynamic>?;
+
+          final mainText =
+              structured?['mainText']
+                  as Map<String, dynamic>?;
+
           final secondaryText =
-              structured?['secondaryText'] as Map<String, dynamic>?;
+              structured?['secondaryText']
+                  as Map<String, dynamic>?;
 
           return {
-            'placeId': prediction['placeId']?.toString() ?? '',
-            'description': text?['text']?.toString() ?? '',
-            'mainText': mainText?['text']?.toString() ?? '',
-            'secondaryText': secondaryText?['text']?.toString() ?? '',
+            'placeId':
+                prediction['placeId']?.toString() ?? '',
+            'description':
+                text?['text']?.toString() ?? '',
+            'mainText':
+                mainText?['text']?.toString() ?? '',
+            'secondaryText':
+                secondaryText?['text']?.toString() ?? '',
           };
         })
-        .where((item) => (item['placeId'] as String).isNotEmpty)
+        .where(
+          (item) =>
+              (item['placeId'] as String).isNotEmpty,
+        )
         .toList();
   }
 
-  Future<Map<String, dynamic>> getPlaceDetails(String placeId) async {
+  Future<Map<String, dynamic>> getPlaceDetails(
+    String placeId,
+  ) async {
     _checkKey();
 
     final response = await http.get(
@@ -79,11 +112,13 @@ class PlacesService {
 
     if (response.statusCode != 200) {
       throw Exception(
-        'Place details failed (${response.statusCode}): ${response.body}',
+        'Place details failed '
+        '(${response.statusCode}): ${response.body}',
       );
     }
 
-    return jsonDecode(response.body) as Map<String, dynamic>;
+    return jsonDecode(response.body)
+        as Map<String, dynamic>;
   }
 
   Future<List<Map<String, dynamic>>> searchPlaces({
@@ -100,7 +135,11 @@ class PlacesService {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': _apiKey,
         'X-Goog-FieldMask':
-            'places.id,places.displayName,places.formattedAddress,places.location,places.types',
+            'places.id,'
+            'places.displayName,'
+            'places.formattedAddress,'
+            'places.location,'
+            'places.types',
       },
       body: jsonEncode({
         'textQuery': query,
@@ -120,66 +159,95 @@ class PlacesService {
 
     if (response.statusCode != 200) {
       throw Exception(
-        'Places search failed (${response.statusCode}): ${response.body}',
+        'Places search failed '
+        '(${response.statusCode}): ${response.body}',
       );
     }
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final places = data['places'] as List<dynamic>? ?? [];
+    final data =
+        jsonDecode(response.body)
+            as Map<String, dynamic>;
+
+    final places =
+        data['places'] as List<dynamic>? ?? [];
 
     return places
-        .map((place) => place as Map<String, dynamic>)
+        .map(
+          (place) =>
+              place as Map<String, dynamic>,
+        )
         .toList();
   }
+
+  // ------------------------------------------------------------
+  // NEARBY HOTELS
+  // ------------------------------------------------------------
+
   Future<List<Map<String, dynamic>>> searchNearbyHotels({
-  required double latitude,
-  required double longitude,
-  double radius = 10000,
-  int maxResultCount = 20,
-}) async {
-  _checkKey();
+    required double latitude,
+    required double longitude,
+    double radius = 10000,
+    int maxResultCount = 20,
+  }) async {
+    _checkKey();
 
-  final response = await http.post(
-    Uri.parse('$_baseUrl/places:searchNearby'),
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': _apiKey,
-      'X-Goog-FieldMask':
-          'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.priceLevel,places.types,places.googleMapsUri',
-    },
-    body: jsonEncode({
-      'includedTypes': ['hotel'],
-      'maxResultCount': maxResultCount,
-      'rankPreference': 'DISTANCE',
-      'locationRestriction': {
-        'circle': {
-          'center': {
-            'latitude': latitude,
-            'longitude': longitude,
-          },
-          'radius': radius,
-        },
+    final response = await http.post(
+      Uri.parse('$_baseUrl/places:searchNearby'),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': _apiKey,
+        'X-Goog-FieldMask':
+            'places.id,'
+            'places.displayName,'
+            'places.formattedAddress,'
+            'places.location,'
+            'places.rating,'
+            'places.userRatingCount,'
+            'places.priceLevel,'
+            'places.priceRange,'
+            'places.types,'
+            'places.googleMapsUri',
       },
-      'regionCode': 'IN',
-      'languageCode': 'en',
-    }),
-  );
+      body: jsonEncode({
+        'includedTypes': ['hotel'],
+        'maxResultCount': maxResultCount,
+        'rankPreference': 'DISTANCE',
+        'locationRestriction': {
+          'circle': {
+            'center': {
+              'latitude': latitude,
+              'longitude': longitude,
+            },
+            'radius': radius,
+          },
+        },
+        'regionCode': 'IN',
+        'languageCode': 'en',
+      }),
+    );
 
-  if (response.statusCode != 200) {
-    throw Exception(
-      'Nearby hotel search failed '
-      '(${response.statusCode}): ${response.body}',
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Nearby hotel search failed '
+        '(${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final data =
+        jsonDecode(response.body)
+            as Map<String, dynamic>;
+
+    return List<Map<String, dynamic>>.from(
+      data['places'] ?? [],
     );
   }
 
-  final data = jsonDecode(response.body) as Map<String, dynamic>;
+  // ------------------------------------------------------------
+  // NEARBY RESTAURANTS
+  // ------------------------------------------------------------
 
-  return List<Map<String, dynamic>>.from(
-    data['places'] ?? [],
-  );
-}
-
-  Future<List<Map<String, dynamic>>> searchNearbyRestaurants({
+  Future<List<Map<String, dynamic>>>
+      searchNearbyRestaurants({
     required double latitude,
     required double longitude,
     double radius = 5000,
@@ -193,7 +261,16 @@ class PlacesService {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': _apiKey,
         'X-Goog-FieldMask':
-            'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.priceLevel,places.types,places.googleMapsUri',
+            'places.id,'
+            'places.displayName,'
+            'places.formattedAddress,'
+            'places.location,'
+            'places.rating,'
+            'places.userRatingCount,'
+            'places.priceLevel,'
+            'places.priceRange,'
+            'places.types,'
+            'places.googleMapsUri',
       },
       body: jsonEncode({
         'includedTypes': ['restaurant'],
@@ -220,7 +297,9 @@ class PlacesService {
       );
     }
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final data =
+        jsonDecode(response.body)
+            as Map<String, dynamic>;
 
     return List<Map<String, dynamic>>.from(
       data['places'] ?? [],

@@ -5,7 +5,8 @@ import '../../services/restaurant_service.dart';
 import '../../services/trip_destination_service.dart';
 import '../../services/trip_service.dart';
 
-class RestaurantSelectionScreen extends StatefulWidget {
+class RestaurantSelectionScreen
+    extends StatefulWidget {
   final String tripId;
 
   const RestaurantSelectionScreen({
@@ -14,27 +15,31 @@ class RestaurantSelectionScreen extends StatefulWidget {
   });
 
   @override
-  State<RestaurantSelectionScreen> createState() =>
-      _RestaurantSelectionScreenState();
+  State<RestaurantSelectionScreen>
+      createState() =>
+          _RestaurantSelectionScreenState();
 }
 
 class _RestaurantSelectionScreenState
-    extends State<RestaurantSelectionScreen> {
-  final RestaurantService _restaurantService =
+    extends State<
+        RestaurantSelectionScreen> {
+  final RestaurantService
+      _restaurantService =
       RestaurantService();
 
-  final TripDestinationService _destinationService =
+  final TripDestinationService
+      _destinationService =
       TripDestinationService();
 
-  final TripService _tripService = TripService();
+  final TripService _tripService =
+      TripService();
 
-  List<Map<String, dynamic>> _restaurants = [];
+  List<Map<String, dynamic>>
+      _restaurants = [];
 
   String? _selectedRestaurantId;
 
   bool _loading = true;
-
-  int _maxPriceLevel = 2;
 
   @override
   void initState() {
@@ -45,21 +50,29 @@ class _RestaurantSelectionScreenState
   Future<void> _loadRestaurants() async {
     try {
       final selectedPlaces =
-          await _destinationService.getSelectedPlaces(
+          await _destinationService
+              .getSelectedPlaces(
         widget.tripId,
       );
+
+      if (selectedPlaces.isEmpty) {
+        throw Exception(
+          'No tourist places selected.',
+        );
+      }
 
       final restaurants =
           await _restaurantService
               .getRestaurantsNearPlaces(
-        selectedPlaces: selectedPlaces,
-        maxPriceLevel: _maxPriceLevel,
+        selectedPlaces:
+            selectedPlaces,
       );
 
       if (!mounted) return;
 
       setState(() {
-        _restaurants = restaurants;
+        _restaurants =
+            restaurants;
         _loading = false;
       });
     } catch (e) {
@@ -75,43 +88,72 @@ class _RestaurantSelectionScreenState
     }
   }
 
-  String _priceText(int level) {
-    switch (level) {
-      case 0:
-        return 'Free';
-      case 1:
+  String _getName(
+    Map<String, dynamic> restaurant,
+  ) {
+    final displayName =
+        restaurant['displayName']
+            as Map<String, dynamic>?;
+
+    return displayName?['text']
+            ?.toString() ??
+        'Restaurant';
+  }
+
+  String _getPrice(
+    Map<String, dynamic> restaurant,
+  ) {
+    switch (
+        restaurant['priceLevel']
+            ?.toString()) {
+      case 'PRICE_LEVEL_INEXPENSIVE':
         return '₹ Inexpensive';
-      case 2:
+
+      case 'PRICE_LEVEL_MODERATE':
         return '₹₹ Moderate';
-      case 3:
+
+      case 'PRICE_LEVEL_EXPENSIVE':
         return '₹₹₹ Expensive';
-      case 4:
+
+      case 'PRICE_LEVEL_VERY_EXPENSIVE':
         return '₹₹₹₹ Very Expensive';
+
+      case 'PRICE_LEVEL_FREE':
+        return 'Free';
+
       default:
-        return 'Unknown';
+        return 'Price not available';
     }
   }
 
   Future<void> _continue() async {
-    if (_selectedRestaurantId == null) {
-      _showMessage('Please select a restaurant.');
-      return;
-    }
+    final data =
+        <String, dynamic>{
+      'restaurantSelected':
+          _selectedRestaurantId !=
+              null,
+      'updatedAt':
+          DateTime.now()
+              .toIso8601String(),
+    };
 
-    final selectedRestaurant =
-        _restaurants.firstWhere(
-      (restaurant) =>
-          restaurant['id'] ==
-          _selectedRestaurantId,
-    );
+    if (_selectedRestaurantId !=
+        null) {
+      final selectedRestaurant =
+          _restaurants.firstWhere(
+        (restaurant) =>
+            restaurant['id'] ==
+            _selectedRestaurantId,
+      );
+
+      data[
+              'selectedRestaurant'] =
+          selectedRestaurant;
+    }
 
     await _tripService.updateTrip(
       widget.tripId,
-      {
-        'selectedRestaurant':
-            selectedRestaurant,
-        'restaurantSelected': true,
-      },
+      data,
     );
 
     if (!mounted) return;
@@ -125,199 +167,152 @@ class _RestaurantSelectionScreenState
     );
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message,
+  ) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        content: Text(message),
+      ),
     );
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    BuildContext context,
+  ) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          '6. Select Restaurant',
+          '6. Nearby Restaurants',
         ),
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(),
+              child:
+                  CircularProgressIndicator(),
             )
-          : Column(
-              children: [
-                Padding(
+          : _restaurants.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No nearby restaurants found.',
+                  ),
+                )
+              : ListView.builder(
                   padding:
                       const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Maximum restaurant price',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium,
+                  itemCount:
+                      _restaurants.length,
+                  itemBuilder:
+                      (context, index) {
+                    final restaurant =
+                        _restaurants[index];
+
+                    final id =
+                        restaurant['id']
+                            .toString();
+
+                    final selected =
+                        _selectedRestaurantId ==
+                            id;
+
+                    final address =
+                        restaurant[
+                                    'formattedAddress']
+                                ?.toString() ??
+                            '';
+
+                    final rating =
+                        (restaurant[
+                                    'rating']
+                                as num?)
+                            ?.toDouble() ??
+                        0;
+
+                    final nearPlace =
+                        restaurant[
+                                    'nearPlace']
+                                ?.toString() ??
+                            '';
+
+                    return Card(
+                      margin:
+                          const EdgeInsets.only(
+                        bottom: 12,
                       ),
-                      DropdownButton<int>(
-                        value: _maxPriceLevel,
-                        isExpanded: true,
-                        items: const [
-                          DropdownMenuItem(
-                            value: 1,
-                            child:
-                                Text('₹ Inexpensive'),
+                      child: ListTile(
+                        leading: Icon(
+                          selected
+                              ? Icons
+                                  .radio_button_checked
+                              : Icons.restaurant,
+                          color:
+                              Colors.deepOrange,
+                        ),
+                        title: Text(
+                          _getName(
+                            restaurant,
                           ),
-                          DropdownMenuItem(
-                            value: 2,
-                            child:
-                                Text('₹₹ Moderate'),
+                          style:
+                              const TextStyle(
+                            fontWeight:
+                                FontWeight.bold,
                           ),
-                          DropdownMenuItem(
-                            value: 3,
-                            child:
-                                Text('₹₹₹ Expensive'),
-                          ),
-                          DropdownMenuItem(
-                            value: 4,
-                            child:
-                                Text('₹₹₹₹ Very Expensive'),
-                          ),
-                        ],
-                        onChanged: (value) async {
-                          if (value == null) return;
-
+                        ),
+                        subtitle: Text(
+                          '$address\n'
+                          '${_getPrice(restaurant)}\n'
+                          '⭐ $rating\n'
+                          'Near: $nearPlace',
+                        ),
+                        isThreeLine: true,
+                        onTap: () {
                           setState(() {
-                            _maxPriceLevel =
-                                value;
-                            _loading = true;
+                            if (selected) {
+                              _selectedRestaurantId =
+                                  null;
+                            } else {
+                              _selectedRestaurantId =
+                                  id;
+                            }
                           });
-
-                          await _loadRestaurants();
                         },
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-                Expanded(
-                  child: _restaurants.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No restaurants found within the selected price range.',
-                          ),
-                        )
-                      : ListView.builder(
-                          padding:
-                              const EdgeInsets.all(16),
-                          itemCount:
-                              _restaurants.length,
-                          itemBuilder:
-                              (context, index) {
-                            final restaurant =
-                                _restaurants[index];
-
-                            final id =
-                                restaurant['id']
-                                    .toString();
-
-                            final displayName =
-                                restaurant[
-                                            'displayName']
-                                        as Map<String,
-                                            dynamic>?;
-
-                            final name =
-                                displayName?['text']
-                                        ?.toString() ??
-                                    'Restaurant';
-
-                            final address =
-                                restaurant[
-                                            'formattedAddress']
-                                        ?.toString() ??
-                                    '';
-
-                            final rating =
-                                (restaurant[
-                                            'rating']
-                                        as num?)
-                                    ?.toDouble() ??
-                                0;
-
-                            final distance =
-                                (restaurant[
-                                            'distanceFromPlaceKm']
-                                        as num?)
-                                    ?.toDouble() ??
-                                0;
-
-                            final priceLevel =
-                                restaurant[
-                                        'priceLevelNumber']
-                                    as int? ??
-                                2;
-
-                            final nearPlace =
-                                restaurant[
-                                        'nearPlace']
-                                    ?.toString() ??
-                                '';
-
-                            return Card(
-                              margin:
-                                  const EdgeInsets.only(
-                                bottom: 12,
-                              ),
-                              child:
-                                  RadioListTile<String>(
-                                value: id,
-                                groupValue:
-                                    _selectedRestaurantId,
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedRestaurantId =
-                                        value;
-                                  });
-                                },
-                                title: Text(
-                                  name,
-                                  style:
-                                      const TextStyle(
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  '$address\n'
-                                  '${_priceText(priceLevel)} • '
-                                  '⭐ $rating\n'
-                                  '${distance.toStringAsFixed(1)} km from $nearPlace',
-                                ),
-                                secondary:
-                                    const Icon(
-                                  Icons.restaurant,
-                                  color:
-                                      Colors.deepOrange,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
+      bottomNavigationBar:
+          Padding(
+        padding:
+            const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize:
+              MainAxisSize.min,
+          children: [
+            Text(
+              _selectedRestaurantId ==
+                      null
+                  ? 'No restaurant selected (optional)'
+                  : 'Restaurant selected',
             ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16),
-        child: ElevatedButton(
-          onPressed: _loading ? null : _continue,
-          style: ElevatedButton.styleFrom(
-            minimumSize:
-                const Size(double.infinity, 50),
-          ),
-          child: const Text(
-            'Complete & View Map',
-          ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width:
+                  double.infinity,
+              child: ElevatedButton(
+                onPressed:
+                    _loading
+                        ? null
+                        : _continue,
+                child: const Text(
+                  'Continue',
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
