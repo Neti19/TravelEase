@@ -47,3 +47,5 @@ app.*.map.json
 # Firebase
 firebase-debug.log
 .firebase/
+
+.env

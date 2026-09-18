@@ -1,105 +1,120 @@
-import 'package:flutter/material.dart';
-import '../../app_routes.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
+import '../../app_routes.dart';
 
 class SelectPreferencesScreen extends StatefulWidget {
   final String tripId;
+
   const SelectPreferencesScreen({super.key, required this.tripId});
 
   @override
-  State<SelectPreferencesScreen> createState() => _SelectPreferencesScreenState();
+  State<SelectPreferencesScreen> createState() =>
+      _SelectPreferencesScreenState();
 }
 
 class _SelectPreferencesScreenState extends State<SelectPreferencesScreen> {
-  String? _effectiveTripId;
-
   final List<Map<String, dynamic>> _preferences = [
-    {'name': 'Beaches', 'icon': Icons.beach_access, 'selected': false},
-    {'name': 'Nature', 'icon': Icons.park, 'selected': false},
-    {'name': 'History', 'icon': Icons.museum, 'selected': false},
-    {'name': 'Adventure', 'icon': Icons.hiking, 'selected': false},
-    {'name': 'Shopping', 'icon': Icons.shopping_bag, 'selected': false},
-    {'name': 'Food & Drinks', 'icon': Icons.restaurant, 'selected': false},
-    {'name': 'Entertainment', 'icon': Icons.theater_comedy, 'selected': false},
+    {'name': 'Beaches', 'icon': Icons.beach_access},
+    {'name': 'Nature', 'icon': Icons.park},
+    {'name': 'History', 'icon': Icons.museum},
+    {'name': 'Adventure', 'icon': Icons.hiking},
+    {'name': 'Shopping', 'icon': Icons.shopping_bag},
+    {'name': 'Food & Drinks', 'icon': Icons.restaurant},
+    {'name': 'Entertainment', 'icon': Icons.theater_comedy},
   ];
+
+  final Set<String> _selectedPreferences = {};
+  bool _loading = true;
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _effectiveTripId = widget.tripId;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Fallback: If tripId wasn't passed via constructor, check ModalRoute arguments
-      if (_effectiveTripId == null || _effectiveTripId!.isEmpty) {
-        final args = ModalRoute.of(context)?.settings.arguments;
-        if (args is Map<String, dynamic> && args['tripId'] != null) {
-          setState(() {
-            _effectiveTripId = args['tripId'] as String;
-          });
-        }
-      }
-    });
+    _loadSavedPreferences();
   }
 
-  Future<void> _savePreferencesAndNavigate() async {
-    final currentId = _effectiveTripId;
+  Future<void> _loadSavedPreferences() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('trips')
+          .doc(widget.tripId)
+          .get();
 
-    if (currentId == null || currentId.isEmpty) {
+      final values = List<String>.from(doc.data()?['preferences'] ?? []);
+
+      if (!mounted) return;
+      setState(() {
+        _selectedPreferences.addAll(values);
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error: Trip ID is missing.')),
+        SnackBar(content: Text('Could not load preferences: $e')),
+      );
+    }
+  }
+
+  Future<void> _continue() async {
+    if (_selectedPreferences.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select at least one preference.')),
       );
       return;
     }
 
-    // Extract selected preferences from UI state
-    final selectedPreferences = _preferences
-        .where((item) => item['selected'] == true)
-        .map((item) => item['name'] as String)
-        .toList();
+    setState(() => _saving = true);
 
     try {
-      // 1. Update Firestore document with selected preferences
       await FirebaseFirestore.instance
           .collection('trips')
-          .doc(currentId)
-          .update({'preferences': selectedPreferences});
+          .doc(widget.tripId)
+          .set({
+        'preferences': _selectedPreferences.toList(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
-      // 2. Navigate to Tourist Spots screen, passing tripId in route arguments
-      if (mounted) {
-        Navigator.pushNamed(
-          context,
-          AppRoutes.touristSpots,
-          arguments: <String, dynamic>{
-            'tripId': currentId,
-          },
-        );
-      }
+      if (!mounted) return;
+      Navigator.pushNamed(
+        context,
+        AppRoutes.touristSpots,
+        arguments: {'tripId': widget.tripId},
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update trip: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save preferences: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Step 3: Travel Preferences')),
+      appBar: AppBar(title: const Text('3. Travel Preferences')),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'What do you love exploring?',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              'What do you want to visit?',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
-              'Select options to tailor your recommendations.',
-              style: TextStyle(color: Colors.grey[600]),
+              'Select one or more preferences. We will use them to recommend places near your selected destinations.',
+              style: TextStyle(color: Colors.grey[700]),
             ),
             const SizedBox(height: 20),
             Expanded(
@@ -113,26 +128,37 @@ class _SelectPreferencesScreenState extends State<SelectPreferencesScreen> {
                 itemCount: _preferences.length,
                 itemBuilder: (context, index) {
                   final item = _preferences[index];
-                  final isSelected = item['selected'] as bool;
+                  final name = item['name'] as String;
+                  final selected = _selectedPreferences.contains(name);
+
                   return FilterChip(
                     avatar: Icon(item['icon'] as IconData, size: 18),
-                    label: Text(item['name'] as String),
-                    selected: isSelected,
-                    onSelected: (bool selected) {
+                    label: Text(name),
+                    selected: selected,
+                    onSelected: (value) {
                       setState(() {
-                        _preferences[index]['selected'] = selected;
+                        if (value) {
+                          _selectedPreferences.add(name);
+                        } else {
+                          _selectedPreferences.remove(name);
+                        }
                       });
                     },
                   );
                 },
               ),
             ),
-            ElevatedButton(
-              onPressed: _savePreferencesAndNavigate,
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _continue,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+                child: _saving
+                    ? const CircularProgressIndicator()
+                    : const Text('Next: Get Recommended Places'),
               ),
-              child: const Text('Next: Explore Attractions'),
             ),
           ],
         ),

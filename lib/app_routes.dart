@@ -84,8 +84,17 @@ class AppRoutes {
         );
 
       case touristSpots:
+        final args = settings.arguments;
+        String tripId = '';
+
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString();
+        } else if (args is String) {
+          tripId = args;
+        }
+
         return MaterialPageRoute(
-          builder: (_) => const TouristSpotsScreen(),
+          builder: (_) => TouristSpotsScreen(tripId: tripId),
           settings: settings,
         );
 
@@ -93,11 +102,39 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => const TransportSelectionScreen());
 
       case hotelSelection:
-        return MaterialPageRoute(builder: (_) => const HotelSelectionScreen());
+        final args = settings.arguments;
 
+        String tripId = '';
+
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString();
+        } else if (args is String) {
+          tripId = args;
+        }
+
+        return MaterialPageRoute(
+          builder: (_) => HotelSelectionScreen(
+            tripId: tripId,
+          ),
+          settings: settings,
+        );
       case restaurantSelection:
-        return MaterialPageRoute(builder: (_) => const RestaurantSelectionScreen());
+        final args = settings.arguments;
 
+        String tripId = '';
+
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString();
+        } else if (args is String) {
+          tripId = args;
+        }
+
+        return MaterialPageRoute(
+          builder: (_) => RestaurantSelectionScreen(
+            tripId: tripId,
+          ),
+          settings: settings,
+        );
       case generateItinerary:
         return MaterialPageRoute(builder: (_) => const GenerateItineraryScreen());
 
