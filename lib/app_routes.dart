@@ -19,11 +19,13 @@ import 'screens/planning/restaurant_selection_screen.dart';
 // Itinerary Screens
 import 'screens/itinerary/generate_itinerary_screen.dart';
 import 'screens/itinerary/day_wise_itinerary_screen.dart';
-import 'screens/itinerary/customize_itinerary_screen.dart';
+//import 'screens/itinerary/customize_itinerary_screen.dart';
 import 'screens/itinerary/notifications_screen.dart';
 
 // Map Screen
 import 'screens/map/map_navigation_screen.dart';
+
+import 'screens/trips/my_trips_screen.dart';
 
 class AppRoutes {
   static const String login = '/';
@@ -41,7 +43,7 @@ class AppRoutes {
   static const String notifications = '/notifications';
   static const String mapNavigation = '/map-navigation';
   static const String expenseTracker = '/expense-tracker';
-
+  static const String myTrips = '/my-trips';
   static Route<dynamic> generateRoute(RouteSettings settings) {
     switch (settings.name) {
       case login:
@@ -136,25 +138,113 @@ class AppRoutes {
           settings: settings,
         );
       case generateItinerary:
-        return MaterialPageRoute(builder: (_) => const GenerateItineraryScreen());
+        final args = settings.arguments;
+
+        String tripId = '';
+
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString().trim();
+        } else if (args is String) {
+          tripId = args.trim();
+        }
+
+        if (tripId.isEmpty) {
+          return MaterialPageRoute(
+            builder: (_) => const Scaffold(
+              body: Center(
+                child: Text(
+                  'Trip ID is missing.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
+        return MaterialPageRoute(
+          builder: (_) => GenerateItineraryScreen(
+            tripId: tripId,
+          ),
+          settings: settings,
+        );
 
       case dayWiseItinerary:
-        return MaterialPageRoute(builder: (_) => const DayWiseItineraryScreen());
+        final args = settings.arguments;
 
-      case customizeItinerary:
-        return MaterialPageRoute(builder: (_) => const CustomizeItineraryScreen());
+        String tripId = '';
 
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString().trim();
+        } else if (args is String) {
+          tripId = args.trim();
+        }
+
+        if (tripId.isEmpty) {
+          return MaterialPageRoute(
+            builder: (_) => const Scaffold(
+              body: Center(
+                child: Text(
+                  'Trip ID is missing.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
+        return MaterialPageRoute(
+          builder: (_) => DayWiseItineraryScreen(
+            tripId: tripId,
+          ),
+          settings: settings,
+        );
+      
       case notifications:
         return MaterialPageRoute(builder: (_) => const NotificationsScreen());
-
-      case mapNavigation:
-        return MaterialPageRoute(builder: (_) => const MapNavigationScreen());
 
       case expenseTracker:
         return MaterialPageRoute(
           builder: (_) => const ExpenseTrackerScreen(),
         );
 
+    case mapNavigation:
+  final args = settings.arguments;
+
+  String? tripId;
+
+  if (args is Map) {
+    final value = args['tripId'];
+
+    if (value != null) {
+      tripId = value.toString().trim();
+    }
+  } else if (args is String) {
+    tripId = args.trim();
+  }
+
+  if (tripId == null || tripId!.isEmpty) {
+    return MaterialPageRoute(
+      builder: (_) => const Scaffold(
+        body: Center(
+          child: Text(
+            'Trip ID is missing.\nPlease open Main Route from your trip.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }
+
+  return MaterialPageRoute(
+    builder: (_) => MapNavigationScreen(
+      tripId: tripId!,
+    ),
+    settings: settings,
+  );
+  case myTrips:
+  return MaterialPageRoute(
+    builder: (_) => const MyTripsScreen(),
+  );
       default:
         return MaterialPageRoute(
           builder: (_) => const Scaffold(

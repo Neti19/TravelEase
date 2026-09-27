@@ -1,110 +1,360 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import '../../app_routes.dart';
 
-class DayWiseItineraryScreen extends StatelessWidget {
-  const DayWiseItineraryScreen({super.key});
+import '../../app_routes.dart';
+import '../../models/itinerary.dart';
+
+class DayWiseItineraryScreen
+    extends StatefulWidget {
+  final String tripId;
+
+  const DayWiseItineraryScreen({
+    super.key,
+    required this.tripId,
+  });
 
   @override
-  Widget build(BuildContext context) {
+  State<DayWiseItineraryScreen>
+      createState() =>
+          _DayWiseItineraryScreenState();
+}
+
+class _DayWiseItineraryScreenState
+    extends State<DayWiseItineraryScreen> {
+  FullItinerary? _itinerary;
+
+  bool _loading = true;
+
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadItinerary();
+  }
+
+  Future<void> _loadItinerary() async {
+    try {
+      final snapshot =
+          await FirebaseFirestore.instance
+              .collection('trips')
+              .doc(widget.tripId)
+              .get();
+
+      if (!snapshot.exists) {
+        throw Exception(
+          'Trip not found.',
+        );
+      }
+
+      final data =
+          snapshot.data()!;
+
+      final itineraryData =
+          data['itinerary'];
+
+      if (itineraryData is! Map) {
+        throw Exception(
+          'Itinerary has not been generated yet.',
+        );
+      }
+
+      final itinerary =
+          FullItinerary.fromJson(
+        Map<String, dynamic>.from(
+          itineraryData,
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _itinerary = itinerary;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  String _formatTime(
+    DateTime time,
+  ) {
+    final hour =
+        time.hour == 0
+            ? 12
+            : time.hour > 12
+                ? time.hour - 12
+                : time.hour;
+
+    final minute =
+        time.minute.toString().padLeft(
+              2,
+              '0',
+            );
+
+    final period =
+        time.hour >= 12
+            ? 'PM'
+            : 'AM';
+
+    return '$hour:$minute $period';
+  }
+
+  String _typeText(
+    ActivityType type,
+  ) {
+    switch (type) {
+      case ActivityType.spot:
+        return 'Tourist Place';
+
+      case ActivityType.transport:
+        return 'Transport';
+
+      case ActivityType.hotel:
+        return 'Hotel';
+
+      case ActivityType.restaurant:
+        return 'Restaurant';
+    }
+  }
+
+  IconData _typeIcon(
+    ActivityType type,
+  ) {
+    switch (type) {
+      case ActivityType.spot:
+        return Icons.place;
+
+      case ActivityType.transport:
+        return Icons.directions_car;
+
+      case ActivityType.hotel:
+        return Icons.hotel;
+
+      case ActivityType.restaurant:
+        return Icons.restaurant;
+    }
+  }
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(
+          child:
+              CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return Scaffold(
+        appBar: AppBar(
+          title:
+              const Text('Your Trip Plan'),
+        ),
+        body: Center(
+          child: Padding(
+            padding:
+                const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment:
+                  MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  size: 60,
+                ),
+                const SizedBox(
+                  height: 16,
+                ),
+                Text(
+                  _error!,
+                  textAlign:
+                      TextAlign.center,
+                ),
+                const SizedBox(
+                  height: 20,
+                ),
+                ElevatedButton(
+                  onPressed:
+                      _loadItinerary,
+                  child:
+                      const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final itinerary =
+        _itinerary!;
+
     return DefaultTabController(
-      length: 3,
+      length: itinerary.days.length,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Your Trip Plan'),
+          title:
+              const Text('Your Trip Plan'),
           actions: [
             IconButton(
-              icon: const Icon(Icons.edit_calendar),
-              tooltip: 'Customize',
-              onPressed: () => Navigator.pushNamed(context, AppRoutes.customizeItinerary),
+              icon:
+                  const Icon(
+                Icons.edit_calendar,
+              ),
+              tooltip:
+                  'Customize',
+              onPressed: () {
+                Navigator.pushNamed(
+                  context,
+                  AppRoutes.customizeItinerary,
+                  arguments: {
+                    'tripId':
+                        widget.tripId,
+                  },
+                );
+              },
             ),
           ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Day 1'),
-              Tab(text: 'Day 2'),
-              Tab(text: 'Day 3'),
-            ],
+          bottom: TabBar(
+            isScrollable:
+                itinerary.days.length > 4,
+            tabs: itinerary.days
+                .map(
+                  (day) => Tab(
+                    text:
+                        'Day ${day.dayNumber}',
+                  ),
+                )
+                .toList(),
           ),
         ),
         body: TabBarView(
-          children: [
-            _buildDaySchedule(context, dayNumber: 1),
-            _buildDaySchedule(context, dayNumber: 2),
-            _buildDaySchedule(context, dayNumber: 3),
-          ],
+          children: itinerary.days
+              .map(
+                (day) =>
+                    _buildDaySchedule(day),
+              )
+              .toList(),
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Opening Navigation Map...')),
-            );
-          },
-          icon: const Icon(Icons.map_outlined),
-          label: const Text('Map View'),
+        bottomNavigationBar:
+            SafeArea(
+          child: Padding(
+            padding:
+                const EdgeInsets.all(16),
+            child:
+                ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pushNamed(
+                  context,
+                  AppRoutes.mapNavigation,
+                  arguments: {
+                    'tripId':
+                        widget.tripId,
+                  },
+                );
+              },
+              icon: const Icon(
+                Icons.map,
+              ),
+              label: const Text(
+                'Open Route Map',
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildDaySchedule(BuildContext context, {required int dayNumber}) {
-    final List<Map<String, String>> schedule = dayNumber == 1
-        ? [
-      {'time': '08:00 AM', 'title': 'Flight Arrival & Pickup', 'type': 'Transport', 'cost': '\$220'},
-      {'time': '10:00 AM', 'title': 'Hotel Check-in (Grand Central)', 'type': 'Hotel', 'cost': '\$120'},
-      {'time': '11:30 AM', 'title': 'Visit Senso-ji Temple', 'type': 'Spot', 'cost': '\$0'},
-      {'time': '01:30 PM', 'title': 'Lunch at Sakura Ramen', 'type': 'Restaurant', 'cost': '\$15'},
-      {'time': '03:30 PM', 'title': 'Tokyo Skytree Observation', 'type': 'Spot', 'cost': '\$20'},
-    ]
-        : [
-      {'time': '09:00 AM', 'title': 'Meiji Shrine Walking Tour', 'type': 'Spot', 'cost': '\$0'},
-      {'time': '12:30 PM', 'title': 'Lunch at Local Market', 'type': 'Restaurant', 'cost': '\$20'},
-      {'time': '03:00 PM', 'title': 'Shopping in Shibuya', 'type': 'Spot', 'cost': '\$50'},
-    ];
-
+  Widget _buildDaySchedule(
+    DayItinerary day,
+  ) {
     return Column(
       children: [
-        // Budget & Warning Banner
         Container(
-          color: Colors.blue.shade50,
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: const [
-              Icon(Icons.info_outline, color: Colors.blue),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Route optimized to reduce travel time by 35 mins.',
-                  style: TextStyle(fontSize: 13, color: Colors.purple),
-                ),
-              ),
-            ],
+          width: double.infinity,
+          padding:
+              const EdgeInsets.all(14),
+          child: Text(
+            'Day ${day.dayNumber} • '
+            '${day.date.day}/'
+            '${day.date.month}/'
+            '${day.date.year}',
+            style:
+                const TextStyle(
+              fontWeight:
+                  FontWeight.bold,
+              fontSize: 16,
+            ),
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: schedule.length,
-            itemBuilder: (context, index) {
-              final item = schedule[index];
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  leading: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        item['time']!,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                      ),
-                    ],
+          child: day.activities.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No activities scheduled for this day.',
                   ),
-                  title: Text(item['title']!, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text('Type: ${item['type']}'),
-                  trailing: Text(item['cost']!, style: const TextStyle(fontWeight: FontWeight.bold)),
+                )
+              : ListView.builder(
+                  padding:
+                      const EdgeInsets.fromLTRB(
+                    16,
+                    0,
+                    16,
+                    20,
+                  ),
+                  itemCount:
+                      day.activities.length,
+                  itemBuilder:
+                      (context, index) {
+                    final activity =
+                        day.activities[index];
+
+                    return Card(
+                      margin:
+                          const EdgeInsets.only(
+                        bottom: 12,
+                      ),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          child: Icon(
+                            _typeIcon(
+                              activity.type,
+                            ),
+                            size: 20,
+                          ),
+                        ),
+                        title: Text(
+                          activity.title,
+                          style:
+                              const TextStyle(
+                            fontWeight:
+                                FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Text(
+                          '${_formatTime(activity.startTime)}'
+                          ' - '
+                          '${_formatTime(activity.endTime)}\n'
+                          '${_typeText(activity.type)}\n'
+                          '${activity.description}',
+                        ),
+                        isThreeLine: true,
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );
