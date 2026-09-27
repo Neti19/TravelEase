@@ -3,11 +3,15 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/places_service.dart';
 
 class StartingLocationPickerScreen extends StatefulWidget {
   final String? tripId;
 
-  const StartingLocationPickerScreen({super.key, this.tripId});
+  const StartingLocationPickerScreen({
+    super.key,
+    this.tripId,
+  });
 
   @override
   State<StartingLocationPickerScreen> createState() =>
@@ -17,10 +21,11 @@ class StartingLocationPickerScreen extends StatefulWidget {
 class _StartingLocationPickerScreenState
     extends State<StartingLocationPickerScreen> {
   GoogleMapController? _mapController;
+  final PlacesService _placesService = PlacesService();
+  LatLng _selectedLocation =
+  const LatLng(22.6916, 72.8634);
 
-  LatLng _selectedLocation = const LatLng(22.6916, 72.8634);
-
-  String _address = 'Select a location';
+  String _address = 'Getting location...';
 
   bool _loadingCurrentLocation = false;
   bool _isSaving = false;
@@ -31,7 +36,9 @@ class _StartingLocationPickerScreenState
   @override
   void initState() {
     super.initState();
+
     _tripId = widget.tripId;
+
     _updateMarker(_selectedLocation);
   }
 
@@ -39,9 +46,9 @@ class _StartingLocationPickerScreenState
   void didChangeDependencies() {
     super.didChangeDependencies();
 
-    // Read tripId from route arguments if not passed via constructor
     if (_tripId == null || _tripId!.isEmpty) {
       final args = ModalRoute.of(context)?.settings.arguments;
+
       if (args is Map && args['tripId'] != null) {
         _tripId = args['tripId'].toString();
       } else if (args is String && args.isNotEmpty) {
@@ -64,6 +71,8 @@ class _StartingLocationPickerScreenState
           },
         ),
       };
+
+      _address = 'Getting location...';
     });
 
     _getAddress(position);
@@ -75,47 +84,33 @@ class _StartingLocationPickerScreenState
 
   Future<void> _getAddress(LatLng position) async {
     try {
-      final placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
+      final locationName =
+      await _placesService.getLocationName(
+        latitude: position.latitude,
+        longitude: position.longitude,
       );
 
-      if (placemarks.isNotEmpty) {
-        final place = placemarks.first;
-
-        final parts = [
-          place.name,
-          place.street,
-          place.locality,
-          place.administrativeArea,
-          place.postalCode,
-          place.country,
-        ].where((value) => value != null && value!.trim().isNotEmpty);
-
-        if (mounted) {
-          setState(() {
-            _address = parts.join(', ');
-          });
-        }
+      if (mounted) {
+        setState(() {
+          _address = locationName;
+        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _address =
-              '${position.latitude.toStringAsFixed(6)}, '
-              '${position.longitude.toStringAsFixed(6)}';
+          _address = 'Unable to find location';
         });
       }
     }
   }
-
   Future<void> _useCurrentLocation() async {
     setState(() {
       _loadingCurrentLocation = true;
     });
 
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      bool serviceEnabled =
+      await Geolocator.isLocationServiceEnabled();
 
       if (!serviceEnabled) {
         if (mounted) {
@@ -128,7 +123,8 @@ class _StartingLocationPickerScreenState
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () =>
+                      Navigator.pop(context),
                   child: const Text('OK'),
                 ),
               ],
@@ -140,24 +136,29 @@ class _StartingLocationPickerScreenState
       }
 
       LocationPermission permission =
-          await Geolocator.checkPermission();
+      await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+        permission =
+        await Geolocator.requestPermission();
       }
 
       if (permission == LocationPermission.denied) {
-        throw Exception('Location permission denied.');
-      }
-
-      if (permission == LocationPermission.deniedForever) {
         throw Exception(
-          'Location permission permanently denied. '
-          'Please enable it from device settings.',
+          'Location permission denied.',
         );
       }
 
-      final position = await Geolocator.getCurrentPosition(
+      if (permission ==
+          LocationPermission.deniedForever) {
+        throw Exception(
+          'Location permission permanently denied. '
+              'Please enable it from device settings.',
+        );
+      }
+
+      final position =
+      await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
@@ -183,7 +184,10 @@ class _StartingLocationPickerScreenState
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              e.toString().replaceFirst('Exception: ', ''),
+              e.toString().replaceFirst(
+                'Exception: ',
+                '',
+              ),
             ),
           ),
         );
@@ -207,16 +211,27 @@ class _StartingLocationPickerScreenState
         await FirebaseFirestore.instance
             .collection('trips')
             .doc(_tripId)
-            .set({
-          'startingAddress': _address,
-          'startingLatitude': _selectedLocation.latitude,
-          'startingLongitude': _selectedLocation.longitude,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+            .set(
+          {
+            'startingAddress': _address,
+            'startingLatitude':
+            _selectedLocation.latitude,
+            'startingLongitude':
+            _selectedLocation.longitude,
+            'updatedAt':
+            FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to update starting location: $e')),
+          ScaffoldMessenger.of(context)
+              .showSnackBar(
+            SnackBar(
+              content: Text(
+                'Failed to update starting location: $e',
+              ),
+            ),
           );
         }
       } finally {
@@ -234,8 +249,10 @@ class _StartingLocationPickerScreenState
         {
           'tripId': _tripId,
           'address': _address,
-          'latitude': _selectedLocation.latitude,
-          'longitude': _selectedLocation.longitude,
+          'latitude':
+          _selectedLocation.latitude,
+          'longitude':
+          _selectedLocation.longitude,
         },
       );
     }
@@ -245,7 +262,9 @@ class _StartingLocationPickerScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Select Starting Location'),
+        title: const Text(
+          'Select Starting Location',
+        ),
       ),
       body: Stack(
         children: [
@@ -285,18 +304,23 @@ class _StartingLocationPickerScreenState
             right: 16,
             bottom: 100,
             child: FloatingActionButton(
-              onPressed: _loadingCurrentLocation || _isSaving
+              onPressed:
+              _loadingCurrentLocation ||
+                  _isSaving
                   ? null
                   : _useCurrentLocation,
               child: _loadingCurrentLocation
                   ? const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Icon(Icons.my_location),
+                width: 24,
+                height: 24,
+                child:
+                CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              )
+                  : const Icon(
+                Icons.my_location,
+              ),
             ),
           ),
 
@@ -305,24 +329,33 @@ class _StartingLocationPickerScreenState
             left: 20,
             right: 20,
             child: ElevatedButton.icon(
-              onPressed: _isSaving ? null : _confirmLocation,
+              onPressed:
+              _isSaving
+                  ? null
+                  : _confirmLocation,
               icon: _isSaving
                   ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
+                width: 20,
+                height: 20,
+                child:
+                CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
                   : const Icon(Icons.check),
               label: Text(
                 _isSaving
                     ? 'Saving Location...'
                     : 'Confirm Starting Location',
               ),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 52),
+              style:
+              ElevatedButton.styleFrom(
+                minimumSize:
+                const Size(
+                  double.infinity,
+                  52,
+                ),
               ),
             ),
           ),

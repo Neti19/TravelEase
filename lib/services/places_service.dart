@@ -318,6 +318,72 @@ class PlacesService {
     );
   }
 
+  Future<String> getLocationName({
+    required double latitude,
+    required double longitude,
+  }) async {
+    _checkKey();
+
+    final response = await http.post(
+      Uri.parse('$_baseUrl/places:searchText'),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': _apiKey,
+        'X-Goog-FieldMask':
+        'places.displayName,places.formattedAddress',
+      },
+      body: jsonEncode({
+        'textQuery':
+        'location near $latitude, $longitude',
+        'pageSize': 1,
+        'locationBias': {
+          'circle': {
+            'center': {
+              'latitude': latitude,
+              'longitude': longitude,
+            },
+            'radius': 1000.0,
+          },
+        },
+        'regionCode': 'IN',
+        'languageCode': 'en',
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Location lookup failed '
+            '(${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final data =
+    jsonDecode(response.body) as Map<String, dynamic>;
+
+    final places =
+        data['places'] as List<dynamic>? ?? [];
+
+    if (places.isEmpty) {
+      return 'Unknown location';
+    }
+
+    final place =
+    places.first as Map<String, dynamic>;
+
+    final formattedAddress =
+    place['formattedAddress']?.toString();
+
+    if (formattedAddress != null &&
+        formattedAddress.isNotEmpty) {
+      return formattedAddress;
+    }
+
+    final displayName =
+    place['displayName'] as Map<String, dynamic>?;
+
+    return displayName?['text']?.toString() ??
+        'Unknown location';
+  }
   // ------------------------------------------------------------
   // NEARBY RESTAURANTS
   // ------------------------------------------------------------
