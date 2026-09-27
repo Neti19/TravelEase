@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -14,29 +13,46 @@ import '../../services/trip_service.dart';
 class SelectDestinationScreen extends StatefulWidget {
   final String? tripId;
 
-  const SelectDestinationScreen({super.key, this.tripId});
+  const SelectDestinationScreen({
+    super.key,
+    this.tripId,
+  });
 
   @override
   State<SelectDestinationScreen> createState() =>
       _SelectDestinationScreenState();
 }
 
-class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
-  final TextEditingController _searchController = TextEditingController();
+class _SelectDestinationScreenState
+    extends State<SelectDestinationScreen> {
+  final TextEditingController _searchController =
+  TextEditingController();
+
   final PlacesService _placesService = PlacesService();
+
   final TripDestinationService _destinationService =
-      TripDestinationService();
-  final Map<String, Map<String, dynamic>> _selectedDestinations = {};
+  TripDestinationService();
+
+  final Map<String, Map<String, dynamic>>
+  _selectedDestinations = {};
 
   GoogleMapController? _mapController;
+
   Timer? _searchDebounce;
+
   String? _tripId;
+
   bool _loading = true;
   bool _searching = false;
   bool _saving = false;
+  bool _loadingNearby = false;
 
   List<Map<String, dynamic>> _suggestions = [];
-  LatLng _mapCenter = const LatLng(22.6916, 72.8634);
+
+  List<Map<String, dynamic>> _nearbyDestinations = [];
+
+  LatLng _mapCenter =
+  const LatLng(22.6916, 72.8634);
 
   @override
   void initState() {
@@ -49,7 +65,9 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
     super.didChangeDependencies();
 
     if (_tripId == null || _tripId!.isEmpty) {
-      final args = ModalRoute.of(context)?.settings.arguments;
+      final args =
+          ModalRoute.of(context)?.settings.arguments;
+
       if (args is Map) {
         _tripId = args['tripId']?.toString();
       } else if (args is String) {
@@ -64,38 +82,71 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
 
   Future<void> _loadTripData() async {
     final tripId = _tripId;
+
     if (tripId == null || tripId.isEmpty) {
       setState(() => _loading = false);
       return;
     }
 
     try {
-      final trip = await TripService().getTrip(tripId);
-      final saved = await _destinationService.getDestinations(tripId);
+      final trip =
+      await TripService().getTrip(tripId);
+
+      final saved =
+      await _destinationService
+          .getDestinations(tripId);
 
       if (!mounted) return;
 
       if (trip != null) {
-        _mapCenter = LatLng(trip.startLatitude, trip.startLongitude);
+        _mapCenter = LatLng(
+          trip.startLatitude,
+          trip.startLongitude,
+        );
       }
 
       for (final item in saved) {
-        _selectedDestinations[item['id'].toString()] = item;
+        _selectedDestinations[
+        item['id'].toString()] = item;
       }
 
       setState(() => _loading = false);
 
       if (_mapController != null) {
         await _mapController!.animateCamera(
-          CameraUpdate.newLatLngZoom(_mapCenter, 11),
+          CameraUpdate.newLatLngZoom(
+            _mapCenter,
+            11,
+          ),
+        );
+      }
+
+      if (_selectedDestinations.isNotEmpty) {
+        await _loadNearbyDestinations(
+          LatLng(
+            (_selectedDestinations.values.first['latitude']
+            as num)
+                .toDouble(),
+            (_selectedDestinations.values.first['longitude']
+            as num)
+                .toDouble(),
+          ),
         );
       }
     } catch (e) {
       if (!mounted) return;
+
       setState(() => _loading = false);
-      _showMessage('Could not load destinations: $e');
+
+      _showMessage(
+        'Could not load destinations: $e',
+      );
     }
   }
+
+  // ------------------------------------------------------------
+  // SEARCH
+  // ------------------------------------------------------------
 
   Future<void> _searchPlaces(String value) async {
     _searchDebounce?.cancel();
@@ -105,50 +156,90 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
         _suggestions = [];
         _searching = false;
       });
+
       return;
     }
 
-    _searchDebounce = Timer(const Duration(milliseconds: 450), () async {
-      try {
-        setState(() => _searching = true);
-        final results = await _placesService.autocomplete(value.trim());
-        if (!mounted) return;
-        setState(() {
-          _suggestions = results;
-          _searching = false;
-        });
-      } catch (e) {
-        if (!mounted) return;
-        setState(() => _searching = false);
-        _showMessage('Place search failed: $e');
-      }
-    });
+    _searchDebounce = Timer(
+      const Duration(milliseconds: 450),
+          () async {
+        try {
+          setState(() => _searching = true);
+
+          final results =
+          await _placesService.autocomplete(
+            value.trim(),
+          );
+
+          if (!mounted) return;
+
+          setState(() {
+            _suggestions = results;
+            _searching = false;
+          });
+        } catch (e) {
+          if (!mounted) return;
+
+          setState(() => _searching = false);
+
+          _showMessage(
+            'Place search failed: $e',
+          );
+        }
+      },
+    );
   }
 
-  Future<void> _selectSearchResult(Map<String, dynamic> suggestion) async {
-    final placeId = suggestion['placeId']?.toString() ?? '';
+  Future<void> _selectSearchResult(
+      Map<String, dynamic> suggestion,
+      ) async {
+    final placeId =
+        suggestion['placeId']?.toString() ?? '';
+
     if (placeId.isEmpty) return;
 
     try {
-      final details = await _placesService.getPlaceDetails(placeId);
-      final location = details['location'] as Map<String, dynamic>?;
-      final displayName = details['displayName'] as Map<String, dynamic>?;
+      final details =
+      await _placesService.getPlaceDetails(
+        placeId,
+      );
 
-      final lat = (location?['latitude'] as num?)?.toDouble();
-      final lng = (location?['longitude'] as num?)?.toDouble();
+      final location =
+      details['location']
+      as Map<String, dynamic>?;
+
+      final displayName =
+      details['displayName']
+      as Map<String, dynamic>?;
+
+      final lat =
+      (location?['latitude'] as num?)
+          ?.toDouble();
+
+      final lng =
+      (location?['longitude'] as num?)
+          ?.toDouble();
 
       if (lat == null || lng == null) {
-        _showMessage('This place does not have a map location.');
+        _showMessage(
+          'This place does not have a map location.',
+        );
+
         return;
       }
 
-      final name = displayName?['text']?.toString() ??
-          suggestion['mainText']?.toString() ??
-          suggestion['description']?.toString() ??
-          'Selected place';
-      final address = details['formattedAddress']?.toString() ??
-          suggestion['secondaryText']?.toString() ??
-          '';
+      final name =
+          displayName?['text']?.toString() ??
+              suggestion['mainText']?.toString() ??
+              suggestion['description']?.toString() ??
+              'Selected place';
+
+      final address =
+          details['formattedAddress']
+              ?.toString() ??
+              suggestion['secondaryText']
+                  ?.toString() ??
+              '';
 
       await _addDestination(
         name: name,
@@ -160,75 +251,120 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
       );
 
       _searchController.clear();
-      setState(() => _suggestions = []);
+
+      setState(() {
+        _suggestions = [];
+      });
     } catch (e) {
-      _showMessage('Could not add this place: $e');
+      _showMessage(
+        'Could not add this place: $e',
+      );
     }
   }
 
-  Future<void> _selectMapPoint(LatLng position) async {
-    try {
-      final placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
+  // ------------------------------------------------------------
+  // MAP SELECTION
+  // ------------------------------------------------------------
 
-      String address = 'Selected map location';
-      if (placemarks.isNotEmpty) {
-        final p = placemarks.first;
-        address = [
-          p.name,
-          p.street,
-          p.locality,
-          p.administrativeArea,
-        ].where((value) => value != null && value!.trim().isNotEmpty).join(', ');
-      }
+  Future<void> _selectMapPoint(
+      LatLng position,
+      ) async {
+    try {
+      /*
+       * Do not use placemarkFromCoordinates here.
+       *
+       * That was causing the map-tap flow to fail,
+       * especially on Flutter Web.
+       *
+       * A map tap can now directly become a destination.
+       */
+
+      final name =
+          'Map location';
+
+      final address =
+          'Lat: ${position.latitude.toStringAsFixed(6)}, '
+          'Lng: ${position.longitude.toStringAsFixed(6)}';
 
       await _addDestination(
-        name: address,
+        name: name,
         address: address,
         latitude: position.latitude,
         longitude: position.longitude,
         source: 'map_tap',
       );
     } catch (e) {
-      _showMessage('Could not read this map location: $e');
+      _showMessage(
+        'Could not add map location: $e',
+      );
     }
   }
+
+  // ------------------------------------------------------------
+  // CURRENT LOCATION
+  // ------------------------------------------------------------
 
   Future<void> _useCurrentLocation() async {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
-        _showMessage('Please turn on location services.');
+        _showMessage(
+          'Please turn on location services.',
+        );
+
         return;
       }
 
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+      var permission =
+      await Geolocator.checkPermission();
+
+      if (permission ==
+          LocationPermission.denied) {
+        permission =
+        await Geolocator.requestPermission();
       }
 
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        _showMessage('Location permission is required.');
+      if (permission ==
+          LocationPermission.denied ||
+          permission ==
+              LocationPermission.deniedForever) {
+        _showMessage(
+          'Location permission is required.',
+        );
+
         return;
       }
 
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
+      final position =
+      await Geolocator.getCurrentPosition(
+        locationSettings:
+        const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
       );
 
-      final point = LatLng(position.latitude, position.longitude);
-      await _mapController?.animateCamera(
-        CameraUpdate.newLatLngZoom(point, 14),
+      final point = LatLng(
+        position.latitude,
+        position.longitude,
       );
+
+      await _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          point,
+          14,
+        ),
+      );
+
       await _selectMapPoint(point);
     } catch (e) {
-      _showMessage('Could not get current location: $e');
+      _showMessage(
+        'Could not get current location: $e',
+      );
     }
   }
+
+  // ------------------------------------------------------------
+  // ADD DESTINATION
+  // ------------------------------------------------------------
 
   Future<void> _addDestination({
     required String name,
@@ -239,12 +375,14 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
     required String source,
   }) async {
     final tripId = _tripId;
+
     if (tripId == null || tripId.isEmpty) {
       _showMessage('Trip ID is missing.');
       return;
     }
 
-    final documentId = await _destinationService.addDestination(
+    final documentId =
+    await _destinationService.addDestination(
       tripId: tripId,
       name: name,
       address: address,
@@ -255,7 +393,10 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
     );
 
     if (documentId == null) {
-      _showMessage('This destination is already selected.');
+      _showMessage(
+        'This destination is already selected.',
+      );
+
       return;
     }
 
@@ -270,30 +411,263 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
     };
 
     setState(() {
-      _selectedDestinations[documentId] = data;
-      _mapCenter = LatLng(latitude, longitude);
+      _selectedDestinations[
+      documentId] = data;
+
+      _mapCenter =
+          LatLng(latitude, longitude);
     });
 
     await _mapController?.animateCamera(
-      CameraUpdate.newLatLngZoom(LatLng(latitude, longitude), 12),
+      CameraUpdate.newLatLngZoom(
+        LatLng(latitude, longitude),
+        12,
+      ),
+    );
+
+    /*
+     * Once a destination is selected,
+     * find nearby destinations around it.
+     */
+    await _loadNearbyDestinations(
+      LatLng(latitude, longitude),
     );
   }
 
-  Future<void> _removeDestination(String id) async {
+  // ------------------------------------------------------------
+  // NEARBY DESTINATIONS
+  // ------------------------------------------------------------
+
+  Future<void> _loadNearbyDestinations(
+      LatLng center,
+      ) async {
+    if (!mounted) return;
+
+    setState(() {
+      _loadingNearby = true;
+    });
+
+    try {
+      final results =
+      await _placesService
+          .searchNearbyDestinations(
+        latitude: center.latitude,
+        longitude: center.longitude,
+        radius: 10000,
+        maxResultCount: 10,
+      );
+
+      final selectedPlaceIds =
+      _selectedDestinations.values
+          .map(
+            (item) =>
+            item['placeId']?.toString(),
+      )
+          .where(
+            (id) =>
+        id != null &&
+            id.isNotEmpty,
+      )
+          .toSet();
+
+      final selectedCoordinates =
+      _selectedDestinations.values
+          .map(
+            (item) => LatLng(
+          (item['latitude'] as num)
+              .toDouble(),
+          (item['longitude'] as num)
+              .toDouble(),
+        ),
+      )
+          .toList();
+
+      final filtered = <Map<String, dynamic>>[];
+
+      final seenIds = <String>{};
+
+      for (final place in results) {
+        final placeId =
+            place['id']?.toString() ?? '';
+
+        final location =
+        place['location']
+        as Map<String, dynamic>?;
+
+        final lat =
+        (location?['latitude'] as num?)
+            ?.toDouble();
+
+        final lng =
+        (location?['longitude'] as num?)
+            ?.toDouble();
+
+        if (placeId.isEmpty ||
+            lat == null ||
+            lng == null) {
+          continue;
+        }
+
+        if (selectedPlaceIds.contains(placeId)) {
+          continue;
+        }
+
+        if (seenIds.contains(placeId)) {
+          continue;
+        }
+
+        bool alreadySelectedByLocation = false;
+
+        for (final selected
+        in selectedCoordinates) {
+          final distance =
+          Geolocator.distanceBetween(
+            selected.latitude,
+            selected.longitude,
+            lat,
+            lng,
+          );
+
+          if (distance < 50) {
+            alreadySelectedByLocation =
+            true;
+
+            break;
+          }
+        }
+
+        if (alreadySelectedByLocation) {
+          continue;
+        }
+
+        seenIds.add(placeId);
+
+        filtered.add(place);
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _nearbyDestinations = filtered;
+        _loadingNearby = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _loadingNearby = false;
+      });
+
+      _showMessage(
+        'Could not load nearby destinations: $e',
+      );
+    }
+  }
+
+  Future<void> _addNearbyDestination(
+      Map<String, dynamic> place,
+      ) async {
+    final location =
+    place['location']
+    as Map<String, dynamic>?;
+
+    final displayName =
+    place['displayName']
+    as Map<String, dynamic>?;
+
+    final latitude =
+    (location?['latitude'] as num?)
+        ?.toDouble();
+
+    final longitude =
+    (location?['longitude'] as num?)
+        ?.toDouble();
+
+    final placeId =
+        place['id']?.toString() ?? '';
+
+    if (latitude == null ||
+        longitude == null ||
+        placeId.isEmpty) {
+      _showMessage(
+        'This destination has incomplete location data.',
+      );
+
+      return;
+    }
+
+    final name =
+        displayName?['text']?.toString() ??
+            'Nearby destination';
+
+    final address =
+        place['formattedAddress']
+            ?.toString() ??
+            '';
+
+    await _addDestination(
+      name: name,
+      address: address,
+      latitude: latitude,
+      longitude: longitude,
+      placeId: placeId,
+      source: 'nearby_places_api',
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _nearbyDestinations.removeWhere(
+            (item) =>
+        item['id']?.toString() ==
+            placeId,
+      );
+    });
+  }
+
+  // ------------------------------------------------------------
+  // REMOVE
+  // ------------------------------------------------------------
+
+  Future<void> _removeDestination(
+      String id,
+      ) async {
     final tripId = _tripId;
+
     if (tripId == null) return;
 
-    await _destinationService.removeDestination(tripId, id);
-    setState(() => _selectedDestinations.remove(id));
+    await _destinationService
+        .removeDestination(
+      tripId,
+      id,
+    );
+
+    setState(() {
+      _selectedDestinations.remove(id);
+    });
+
+    if (_selectedDestinations.isEmpty) {
+      setState(() {
+        _nearbyDestinations = [];
+      });
+    }
   }
+
+  // ------------------------------------------------------------
+  // CONTINUE
+  // ------------------------------------------------------------
 
   Future<void> _continue() async {
     if (_selectedDestinations.isEmpty) {
-      _showMessage('Select at least one destination.');
+      _showMessage(
+        'Select at least one destination.',
+      );
+
       return;
     }
 
     final tripId = _tripId;
+
     if (tripId == null || tripId.isEmpty) {
       _showMessage('Trip ID is missing.');
       return;
@@ -302,45 +676,79 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
     setState(() => _saving = true);
 
     try {
-      await TripService().updateTrip(tripId, {
-        'destinationCount': _selectedDestinations.length,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      await TripService().updateTrip(
+        tripId,
+        {
+          'destinationCount':
+          _selectedDestinations.length,
+          'updatedAt':
+          FieldValue.serverTimestamp(),
+        },
+      );
 
       if (!mounted) return;
+
       Navigator.pushNamed(
         context,
         AppRoutes.selectPreferences,
-        arguments: {'tripId': tripId},
+        arguments: {
+          'tripId': tripId,
+        },
       );
     } catch (e) {
-      _showMessage('Could not save trip destinations: $e');
+      _showMessage(
+        'Could not save trip destinations: $e',
+      );
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        setState(() => _saving = false);
+      }
     }
   }
 
+  // ------------------------------------------------------------
+  // MARKERS
+  // ------------------------------------------------------------
+
   Set<Marker> _markers() {
-    return _selectedDestinations.entries.map((entry) {
-      final data = entry.value;
-      return Marker(
-        markerId: MarkerId(entry.key),
-        position: LatLng(
-          (data['latitude'] as num).toDouble(),
-          (data['longitude'] as num).toDouble(),
-        ),
-        infoWindow: InfoWindow(
-          title: data['name']?.toString() ?? 'Destination',
-          snippet: data['address']?.toString() ?? '',
-        ),
-      );
-    }).toSet();
+    return _selectedDestinations.entries
+        .map(
+          (entry) {
+        final data = entry.value;
+
+        return Marker(
+          markerId:
+          MarkerId(entry.key),
+          position: LatLng(
+            (data['latitude'] as num)
+                .toDouble(),
+            (data['longitude'] as num)
+                .toDouble(),
+          ),
+          infoWindow: InfoWindow(
+            title:
+            data['name']?.toString() ??
+                'Destination',
+            snippet:
+            data['address']?.toString() ??
+                '',
+          ),
+        );
+      },
+    )
+        .toSet();
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+      String message,
+      ) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        content: Text(message),
+      ),
     );
   }
 
@@ -351,22 +759,32 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
     super.dispose();
   }
 
+  // ------------------------------------------------------------
+  // UI
+  // ------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: Center(
+          child:
+          CircularProgressIndicator(),
+        ),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('2. Select Destinations'),
+        title: const Text(
+          '2. Select Destinations',
+        ),
       ),
       body: Stack(
         children: [
           GoogleMap(
-            initialCameraPosition: CameraPosition(
+            initialCameraPosition:
+            CameraPosition(
               target: _mapCenter,
               zoom: 10,
             ),
@@ -374,11 +792,17 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
-            onMapCreated: (controller) {
-              _mapController = controller;
+            onMapCreated:
+                (controller) {
+              _mapController =
+                  controller;
             },
             onTap: _selectMapPoint,
           ),
+
+          // --------------------------------------------------
+          // SEARCH BAR
+          // --------------------------------------------------
 
           Positioned(
             top: 12,
@@ -388,68 +812,152 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
               children: [
                 Material(
                   elevation: 4,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius:
+                  BorderRadius.circular(
+                    12,
+                  ),
                   child: TextField(
-                    controller: _searchController,
-                    onChanged: _searchPlaces,
-                    decoration: InputDecoration(
-                      hintText: 'Search destination or place',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _searching
+                    controller:
+                    _searchController,
+                    onChanged:
+                    _searchPlaces,
+                    decoration:
+                    InputDecoration(
+                      hintText:
+                      'Search destination or place',
+                      prefixIcon:
+                      const Icon(
+                        Icons.search,
+                      ),
+                      suffixIcon:
+                      _searching
                           ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
+                        padding:
+                        EdgeInsets.all(
+                          12,
+                        ),
+                        child:
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child:
+                          CircularProgressIndicator(
+                            strokeWidth:
+                            2,
+                          ),
+                        ),
+                      )
                           : IconButton(
-                              icon: const Icon(Icons.close),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _suggestions = []);
-                              },
-                            ),
+                        icon:
+                        const Icon(
+                          Icons.close,
+                        ),
+                        onPressed:
+                            () {
+                          _searchController
+                              .clear();
+
+                          setState(
+                                () =>
+                            _suggestions =
+                            [],
+                          );
+                        },
+                      ),
                       filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+                      fillColor:
+                      Colors.white,
+                      border:
+                      OutlineInputBorder(
+                        borderRadius:
+                        BorderRadius
+                            .circular(
+                          12,
+                        ),
+                        borderSide:
+                        BorderSide.none,
                       ),
                     ),
                   ),
                 ),
 
-                if (_suggestions.isNotEmpty)
+                if (_suggestions
+                    .isNotEmpty)
                   Container(
-                    margin: const EdgeInsets.only(top: 4),
-                    constraints: const BoxConstraints(maxHeight: 260),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: const [
-                        BoxShadow(blurRadius: 8, color: Colors.black26),
+                    margin:
+                    const EdgeInsets.only(
+                      top: 4,
+                    ),
+                    constraints:
+                    const BoxConstraints(
+                      maxHeight: 260,
+                    ),
+                    decoration:
+                    BoxDecoration(
+                      color:
+                      Colors.white,
+                      borderRadius:
+                      BorderRadius
+                          .circular(
+                        12,
+                      ),
+                      boxShadow:
+                      const [
+                        BoxShadow(
+                          blurRadius: 8,
+                          color:
+                          Colors.black26,
+                        ),
                       ],
                     ),
-                    child: ListView.builder(
+                    child:
+                    ListView.builder(
                       shrinkWrap: true,
-                      itemCount: _suggestions.length,
-                      itemBuilder: (context, index) {
-                        final item = _suggestions[index];
+                      itemCount:
+                      _suggestions.length,
+                      itemBuilder:
+                          (
+                          context,
+                          index,
+                          ) {
+                        final item =
+                        _suggestions[
+                        index];
+
                         return ListTile(
-                          leading: const Icon(Icons.location_on),
-                          title: Text(
-                            item['mainText']?.toString().isNotEmpty == true
-                                ? item['mainText'].toString()
-                                : item['description'].toString(),
+                          leading:
+                          const Icon(
+                            Icons
+                                .location_on,
                           ),
-                          subtitle: Text(
-                            item['secondaryText']?.toString() ?? '',
+                          title:
+                          Text(
+                            item['mainText']
+                                ?.toString()
+                                .isNotEmpty ==
+                                true
+                                ? item[
+                            'mainText']
+                                .toString()
+                                : item[
+                            'description']
+                                .toString(),
+                          ),
+                          subtitle:
+                          Text(
+                            item[
+                            'secondaryText']
+                                ?.toString() ??
+                                '',
                             maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            overflow:
+                            TextOverflow
+                                .ellipsis,
                           ),
-                          onTap: () => _selectSearchResult(item),
+                          onTap: () =>
+                              _selectSearchResult(
+                                item,
+                              ),
                         );
                       },
                     ),
@@ -458,16 +966,42 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
             ),
           ),
 
+          // --------------------------------------------------
+          // CURRENT LOCATION
+          // --------------------------------------------------
+
           Positioned(
             right: 12,
-            bottom: 165,
-            child: FloatingActionButton(
-              heroTag: 'current_location_destination',
+            bottom: 250,
+            child:
+            FloatingActionButton(
+              heroTag:
+              'current_location_destination',
               mini: true,
-              onPressed: _useCurrentLocation,
-              child: const Icon(Icons.my_location),
+              onPressed:
+              _useCurrentLocation,
+              child: const Icon(
+                Icons.my_location,
+              ),
             ),
           ),
+
+          // --------------------------------------------------
+          // NEARBY DESTINATIONS
+          // --------------------------------------------------
+
+          if (_selectedDestinations
+              .isNotEmpty)
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 175,
+              child: _buildNearbyDestinations(),
+            ),
+
+          // --------------------------------------------------
+          // BOTTOM SELECTED DESTINATIONS
+          // --------------------------------------------------
 
           Positioned(
             left: 12,
@@ -475,62 +1009,123 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
             bottom: 12,
             child: Material(
               elevation: 5,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius:
+              BorderRadius.circular(
+                16,
+              ),
               color: Colors.white,
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding:
+                const EdgeInsets.all(
+                  12,
+                ),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize:
+                  MainAxisSize.min,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.place),
-                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.place,
+                        ),
+                        const SizedBox(
+                          width: 8,
+                        ),
                         Expanded(
                           child: Text(
                             '${_selectedDestinations.length} destination(s) selected',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                            style:
+                            const TextStyle(
+                              fontWeight:
+                              FontWeight.bold,
+                            ),
                           ),
                         ),
-                        const Text('Tap map to add'),
+                        const Text(
+                          'Tap map to add',
+                        ),
                       ],
                     ),
-                    if (_selectedDestinations.isNotEmpty) ...[
-                      const SizedBox(height: 8),
+
+                    if (_selectedDestinations
+                        .isNotEmpty) ...[
+                      const SizedBox(
+                        height: 8,
+                      ),
                       SizedBox(
                         height: 58,
-                        child: ListView(
-                          scrollDirection: Axis.horizontal,
-                          children: _selectedDestinations.entries.map((entry) {
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: InputChip(
-                                label: SizedBox(
-                                  width: 130,
-                                  child: Text(
-                                    entry.value['name'].toString(),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                        child:
+                        ListView(
+                          scrollDirection:
+                          Axis.horizontal,
+                          children:
+                          _selectedDestinations
+                              .entries
+                              .map(
+                                (entry) {
+                              return Padding(
+                                padding:
+                                const EdgeInsets
+                                    .only(
+                                  right: 8,
                                 ),
-                                onDeleted: () =>
-                                    _removeDestination(entry.key),
-                              ),
-                            );
-                          }).toList(),
+                                child:
+                                InputChip(
+                                  label:
+                                  SizedBox(
+                                    width:
+                                    130,
+                                    child:
+                                    Text(
+                                      entry.value[
+                                      'name']
+                                          .toString(),
+                                      overflow:
+                                      TextOverflow
+                                          .ellipsis,
+                                    ),
+                                  ),
+                                  onDeleted:
+                                      () =>
+                                      _removeDestination(
+                                        entry.key,
+                                      ),
+                                ),
+                              );
+                            },
+                          ).toList(),
                         ),
                       ),
                     ],
-                    const SizedBox(height: 8),
+
+                    const SizedBox(
+                      height: 8,
+                    ),
+
                     SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _continue,
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 48),
+                      width:
+                      double.infinity,
+                      child:
+                      ElevatedButton(
+                        onPressed:
+                        _saving
+                            ? null
+                            : _continue,
+                        style:
+                        ElevatedButton
+                            .styleFrom(
+                          minimumSize:
+                          const Size(
+                            double.infinity,
+                            48,
+                          ),
                         ),
-                        child: _saving
+                        child:
+                        _saving
                             ? const CircularProgressIndicator()
-                            : const Text('Next: Select Preferences'),
+                            : const Text(
+                          'Next: Select Preferences',
+                        ),
                       ),
                     ),
                   ],
@@ -539,6 +1134,223 @@ class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------
+  // NEARBY UI
+  // ------------------------------------------------------------
+
+  Widget _buildNearbyDestinations() {
+    return Material(
+      elevation: 5,
+      borderRadius:
+      BorderRadius.circular(16),
+      color: Colors.white,
+      child: Padding(
+        padding:
+        const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment:
+          CrossAxisAlignment.start,
+          mainAxisSize:
+          MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.explore,
+                  size: 20,
+                ),
+                const SizedBox(
+                  width: 8,
+                ),
+                const Expanded(
+                  child: Text(
+                    'Nearby destinations',
+                    style: TextStyle(
+                      fontWeight:
+                      FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                if (_loadingNearby)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child:
+                    CircularProgressIndicator(
+                      strokeWidth: 2,
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(
+              height: 8,
+            ),
+
+            if (_loadingNearby &&
+                _nearbyDestinations
+                    .isEmpty)
+              const Padding(
+                padding:
+                EdgeInsets.symmetric(
+                  vertical: 8,
+                ),
+                child: Text(
+                  'Finding places near your destination...',
+                ),
+              )
+            else if (_nearbyDestinations
+                .isEmpty)
+              const Padding(
+                padding:
+                EdgeInsets.symmetric(
+                  vertical: 8,
+                ),
+                child: Text(
+                  'No nearby destinations found.',
+                ),
+              )
+            else
+              SizedBox(
+                height: 105,
+                child: ListView.builder(
+                  scrollDirection:
+                  Axis.horizontal,
+                  itemCount:
+                  _nearbyDestinations
+                      .length,
+                  itemBuilder:
+                      (context, index) {
+                    final place =
+                    _nearbyDestinations[
+                    index];
+
+                    final displayName =
+                    place[
+                    'displayName']
+                    as Map<String,
+                        dynamic>?;
+
+                    final name =
+                        displayName?[
+                        'text']
+                            ?.toString() ??
+                            'Destination';
+
+                    final address =
+                        place[
+                        'formattedAddress']
+                            ?.toString() ??
+                            '';
+
+                    return Container(
+                      width: 220,
+                      margin:
+                      const EdgeInsets
+                          .only(
+                        right: 8,
+                      ),
+                      padding:
+                      const EdgeInsets
+                          .all(10),
+                      decoration:
+                      BoxDecoration(
+                        border: Border.all(
+                          color: Colors
+                              .grey
+                              .shade300,
+                        ),
+                        borderRadius:
+                        BorderRadius
+                            .circular(
+                          12,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment:
+                        CrossAxisAlignment
+                            .start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons
+                                    .location_on,
+                                size: 18,
+                              ),
+                              const SizedBox(
+                                width: 4,
+                              ),
+                              Expanded(
+                                child:
+                                Text(
+                                  name,
+                                  maxLines:
+                                  1,
+                                  overflow:
+                                  TextOverflow
+                                      .ellipsis,
+                                  style:
+                                  const TextStyle(
+                                    fontWeight:
+                                    FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(
+                            height: 4,
+                          ),
+
+                          Expanded(
+                            child: Text(
+                              address,
+                              maxLines:
+                              2,
+                              overflow:
+                              TextOverflow
+                                  .ellipsis,
+                              style:
+                              TextStyle(
+                                fontSize:
+                                11,
+                                color: Colors
+                                    .grey
+                                    .shade700,
+                              ),
+                            ),
+                          ),
+
+                          SizedBox(
+                            height: 30,
+                            child:
+                            OutlinedButton(
+                              onPressed:
+                                  () =>
+                                  _addNearbyDestination(
+                                    place,
+                                  ),
+                              child:
+                              const Text(
+                                'Add',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
