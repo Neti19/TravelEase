@@ -311,9 +311,42 @@ class AppRoutes {
         );
 
       case expenseTracker:
+        final args =
+            settings.arguments;
+
+        String tripId = '';
+
+        if (args is Map &&
+            args['tripId'] != null) {
+          tripId =
+              args['tripId']
+                  .toString()
+                  .trim();
+        } else if (args is String) {
+          tripId = args.trim();
+        }
+
+        if (tripId.isEmpty) {
+          return MaterialPageRoute(
+            builder: (_) =>
+            const Scaffold(
+              body: Center(
+                child: Text(
+                  'Trip ID is missing.',
+                  textAlign:
+                  TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
         return MaterialPageRoute(
           builder: (_) =>
-          const ExpenseTrackerScreen(),
+              ExpenseTrackerScreen(
+                tripId: tripId,
+              ),
+          settings: settings,
         );
 
       case mapNavigation:

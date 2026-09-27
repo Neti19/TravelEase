@@ -15,8 +15,8 @@ class DayWiseItineraryScreen
 
   @override
   State<DayWiseItineraryScreen>
-      createState() =>
-          _DayWiseItineraryScreenState();
+  createState() =>
+      _DayWiseItineraryScreenState();
 }
 
 class _DayWiseItineraryScreenState
@@ -36,10 +36,11 @@ class _DayWiseItineraryScreenState
   Future<void> _loadItinerary() async {
     try {
       final snapshot =
-          await FirebaseFirestore.instance
-              .collection('trips')
-              .doc(widget.tripId)
-              .get();
+      await FirebaseFirestore
+          .instance
+          .collection('trips')
+          .doc(widget.tripId)
+          .get();
 
       if (!snapshot.exists) {
         throw Exception(
@@ -48,10 +49,10 @@ class _DayWiseItineraryScreenState
       }
 
       final data =
-          snapshot.data()!;
+      snapshot.data()!;
 
       final itineraryData =
-          data['itinerary'];
+      data['itinerary'];
 
       if (itineraryData is! Map) {
         throw Exception(
@@ -60,7 +61,7 @@ class _DayWiseItineraryScreenState
       }
 
       final itinerary =
-          FullItinerary.fromJson(
+      FullItinerary.fromJson(
         Map<String, dynamic>.from(
           itineraryData,
         ),
@@ -83,32 +84,32 @@ class _DayWiseItineraryScreenState
   }
 
   String _formatTime(
-    DateTime time,
-  ) {
+      DateTime time,
+      ) {
     final hour =
-        time.hour == 0
-            ? 12
-            : time.hour > 12
-                ? time.hour - 12
-                : time.hour;
+    time.hour == 0
+        ? 12
+        : time.hour > 12
+        ? time.hour - 12
+        : time.hour;
 
     final minute =
-        time.minute.toString().padLeft(
-              2,
-              '0',
-            );
+    time.minute.toString().padLeft(
+      2,
+      '0',
+    );
 
     final period =
-        time.hour >= 12
-            ? 'PM'
-            : 'AM';
+    time.hour >= 12
+        ? 'PM'
+        : 'AM';
 
     return '$hour:$minute $period';
   }
 
   String _typeText(
-    ActivityType type,
-  ) {
+      ActivityType type,
+      ) {
     switch (type) {
       case ActivityType.spot:
         return 'Tourist Place';
@@ -125,8 +126,8 @@ class _DayWiseItineraryScreenState
   }
 
   IconData _typeIcon(
-    ActivityType type,
-  ) {
+      ActivityType type,
+      ) {
     switch (type) {
       case ActivityType.spot:
         return Icons.place;
@@ -144,13 +145,13 @@ class _DayWiseItineraryScreenState
 
   @override
   Widget build(
-    BuildContext context,
-  ) {
+      BuildContext context,
+      ) {
     if (_loading) {
       return const Scaffold(
         body: Center(
           child:
-              CircularProgressIndicator(),
+          CircularProgressIndicator(),
         ),
       );
     }
@@ -159,15 +160,15 @@ class _DayWiseItineraryScreenState
       return Scaffold(
         appBar: AppBar(
           title:
-              const Text('Your Trip Plan'),
+          const Text('Your Trip Plan'),
         ),
         body: Center(
           child: Padding(
             padding:
-                const EdgeInsets.all(24),
+            const EdgeInsets.all(24),
             child: Column(
               mainAxisAlignment:
-                  MainAxisAlignment.center,
+              MainAxisAlignment.center,
               children: [
                 const Icon(
                   Icons.error_outline,
@@ -179,16 +180,16 @@ class _DayWiseItineraryScreenState
                 Text(
                   _error!,
                   textAlign:
-                      TextAlign.center,
+                  TextAlign.center,
                 ),
                 const SizedBox(
                   height: 20,
                 ),
                 ElevatedButton(
                   onPressed:
-                      _loadItinerary,
+                  _loadItinerary,
                   child:
-                      const Text('Retry'),
+                  const Text('Retry'),
                 ),
               ],
             ),
@@ -198,29 +199,29 @@ class _DayWiseItineraryScreenState
     }
 
     final itinerary =
-        _itinerary!;
+    _itinerary!;
 
     return DefaultTabController(
       length: itinerary.days.length,
       child: Scaffold(
         appBar: AppBar(
           title:
-              const Text('Your Trip Plan'),
+          const Text('Your Trip Plan'),
           actions: [
             IconButton(
               icon:
-                  const Icon(
+              const Icon(
                 Icons.edit_calendar,
               ),
               tooltip:
-                  'Customize',
+              'Customize',
               onPressed: () {
                 Navigator.pushNamed(
                   context,
                   AppRoutes.customizeItinerary,
                   arguments: {
                     'tripId':
-                        widget.tripId,
+                    widget.tripId,
                   },
                 );
               },
@@ -228,14 +229,14 @@ class _DayWiseItineraryScreenState
           ],
           bottom: TabBar(
             isScrollable:
-                itinerary.days.length > 4,
+            itinerary.days.length > 4,
             tabs: itinerary.days
                 .map(
                   (day) => Tab(
-                    text:
-                        'Day ${day.dayNumber}',
-                  ),
-                )
+                text:
+                'Day ${day.dayNumber}',
+              ),
+            )
                 .toList(),
           ),
         ),
@@ -243,33 +244,70 @@ class _DayWiseItineraryScreenState
           children: itinerary.days
               .map(
                 (day) =>
-                    _buildDaySchedule(day),
-              )
+                _buildDaySchedule(day),
+          )
               .toList(),
         ),
         bottomNavigationBar:
-            SafeArea(
+        SafeArea(
           child: Padding(
             padding:
-                const EdgeInsets.all(16),
-            child:
-                ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pushNamed(
-                  context,
-                  AppRoutes.mapNavigation,
-                  arguments: {
-                    'tripId':
-                        widget.tripId,
-                  },
-                );
-              },
-              icon: const Icon(
-                Icons.map,
-              ),
-              label: const Text(
-                'Open Route Map',
-              ),
+            const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize:
+              MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width:
+                  double.infinity,
+                  child:
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pushNamed(
+                        context,
+                        AppRoutes.expenseTracker,
+                        arguments: {
+                          'tripId':
+                          widget.tripId,
+                        },
+                      );
+                    },
+                    icon: const Icon(
+                      Icons
+                          .account_balance_wallet,
+                    ),
+                    label: const Text(
+                      'Track Trip Expenses',
+                    ),
+                  ),
+                ),
+                const SizedBox(
+                  height: 10,
+                ),
+                SizedBox(
+                  width:
+                  double.infinity,
+                  child:
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pushNamed(
+                        context,
+                        AppRoutes.mapNavigation,
+                        arguments: {
+                          'tripId':
+                          widget.tripId,
+                        },
+                      );
+                    },
+                    icon: const Icon(
+                      Icons.map,
+                    ),
+                    label: const Text(
+                      'Open Route Map',
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -278,23 +316,23 @@ class _DayWiseItineraryScreenState
   }
 
   Widget _buildDaySchedule(
-    DayItinerary day,
-  ) {
+      DayItinerary day,
+      ) {
     return Column(
       children: [
         Container(
           width: double.infinity,
           padding:
-              const EdgeInsets.all(14),
+          const EdgeInsets.all(14),
           child: Text(
             'Day ${day.dayNumber} • '
-            '${day.date.day}/'
-            '${day.date.month}/'
-            '${day.date.year}',
+                '${day.date.day}/'
+                '${day.date.month}/'
+                '${day.date.year}',
             style:
-                const TextStyle(
+            const TextStyle(
               fontWeight:
-                  FontWeight.bold,
+              FontWeight.bold,
               fontSize: 16,
             ),
           ),
@@ -302,59 +340,60 @@ class _DayWiseItineraryScreenState
         Expanded(
           child: day.activities.isEmpty
               ? const Center(
-                  child: Text(
-                    'No activities scheduled for this day.',
-                  ),
-                )
+            child: Text(
+              'No activities scheduled for this day.',
+            ),
+          )
               : ListView.builder(
-                  padding:
-                      const EdgeInsets.fromLTRB(
-                    16,
-                    0,
-                    16,
-                    20,
-                  ),
-                  itemCount:
-                      day.activities.length,
-                  itemBuilder:
-                      (context, index) {
-                    final activity =
-                        day.activities[index];
+            padding:
+            const EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              20,
+            ),
+            itemCount:
+            day.activities.length,
+            itemBuilder:
+                (context, index) {
+              final activity =
+              day.activities[index];
 
-                    return Card(
-                      margin:
-                          const EdgeInsets.only(
-                        bottom: 12,
-                      ),
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          child: Icon(
-                            _typeIcon(
-                              activity.type,
-                            ),
-                            size: 20,
-                          ),
-                        ),
-                        title: Text(
-                          activity.title,
-                          style:
-                              const TextStyle(
-                            fontWeight:
-                                FontWeight.bold,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${_formatTime(activity.startTime)}'
-                          ' - '
-                          '${_formatTime(activity.endTime)}\n'
-                          '${_typeText(activity.type)}\n'
-                          '${activity.description}',
-                        ),
-                        isThreeLine: true,
-                      ),
-                    );
-                  },
+              return Card(
+                margin:
+                const EdgeInsets.only(
+                  bottom: 12,
                 ),
+                child: ListTile(
+                  leading:
+                  CircleAvatar(
+                    child: Icon(
+                      _typeIcon(
+                        activity.type,
+                      ),
+                      size: 20,
+                    ),
+                  ),
+                  title: Text(
+                    activity.title,
+                    style:
+                    const TextStyle(
+                      fontWeight:
+                      FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${_formatTime(activity.startTime)}'
+                        ' - '
+                        '${_formatTime(activity.endTime)}\n'
+                        '${_typeText(activity.type)}\n'
+                        '${activity.description}',
+                  ),
+                  isThreeLine: true,
+                ),
+              );
+            },
+          ),
         ),
       ],
     );
