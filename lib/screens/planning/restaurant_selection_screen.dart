@@ -16,26 +16,26 @@ class RestaurantSelectionScreen
 
   @override
   State<RestaurantSelectionScreen>
-      createState() =>
-          _RestaurantSelectionScreenState();
+  createState() =>
+      _RestaurantSelectionScreenState();
 }
 
 class _RestaurantSelectionScreenState
     extends State<
         RestaurantSelectionScreen> {
   final RestaurantService
-      _restaurantService =
-      RestaurantService();
+  _restaurantService =
+  RestaurantService();
 
   final TripDestinationService
-      _destinationService =
-      TripDestinationService();
+  _destinationService =
+  TripDestinationService();
 
   final TripService _tripService =
-      TripService();
+  TripService();
 
   List<Map<String, dynamic>>
-      _restaurants = [];
+  _restaurants = [];
 
   String? _selectedRestaurantId;
 
@@ -50,8 +50,8 @@ class _RestaurantSelectionScreenState
   Future<void> _loadRestaurants() async {
     try {
       final selectedPlaces =
-          await _destinationService
-              .getSelectedPlaces(
+      await _destinationService
+          .getSelectedPlaces(
         widget.tripId,
       );
 
@@ -62,10 +62,10 @@ class _RestaurantSelectionScreenState
       }
 
       final restaurants =
-          await _restaurantService
-              .getRestaurantsNearPlaces(
+      await _restaurantService
+          .getRestaurantsNearPlaces(
         selectedPlaces:
-            selectedPlaces,
+        selectedPlaces,
       );
 
       if (!mounted) return;
@@ -89,23 +89,23 @@ class _RestaurantSelectionScreenState
   }
 
   String _getName(
-    Map<String, dynamic> restaurant,
-  ) {
+      Map<String, dynamic> restaurant,
+      ) {
     final displayName =
-        restaurant['displayName']
-            as Map<String, dynamic>?;
+    restaurant['displayName']
+    as Map<String, dynamic>?;
 
     return displayName?['text']
-            ?.toString() ??
+        ?.toString() ??
         'Restaurant';
   }
 
   String _getPrice(
-    Map<String, dynamic> restaurant,
-  ) {
+      Map<String, dynamic> restaurant,
+      ) {
     switch (
-        restaurant['priceLevel']
-            ?.toString()) {
+    restaurant['priceLevel']
+        ?.toString()) {
       case 'PRICE_LEVEL_INEXPENSIVE':
         return '₹ Inexpensive';
 
@@ -128,26 +128,26 @@ class _RestaurantSelectionScreenState
 
   Future<void> _continue() async {
     final data =
-        <String, dynamic>{
+    <String, dynamic>{
       'restaurantSelected':
-          _selectedRestaurantId !=
-              null,
+      _selectedRestaurantId !=
+          null,
       'updatedAt':
-          DateTime.now()
-              .toIso8601String(),
+      DateTime.now()
+          .toIso8601String(),
     };
 
     if (_selectedRestaurantId !=
         null) {
       final selectedRestaurant =
-          _restaurants.firstWhere(
-        (restaurant) =>
-            restaurant['id'] ==
+      _restaurants.firstWhere(
+            (restaurant) =>
+        restaurant['id'] ==
             _selectedRestaurantId,
       );
 
       data[
-              'selectedRestaurant'] =
+      'selectedRestaurant'] =
           selectedRestaurant;
     }
 
@@ -160,7 +160,7 @@ class _RestaurantSelectionScreenState
 
     Navigator.pushNamed(
       context,
-      AppRoutes.mapNavigation,
+      AppRoutes.transportSelection,
       arguments: {
         'tripId': widget.tripId,
       },
@@ -168,22 +168,24 @@ class _RestaurantSelectionScreenState
   }
 
   void _showMessage(
-    String message,
-  ) {
+      String message,
+      ) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context)
         .showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: Text(
+          message,
+        ),
       ),
     );
   }
 
   @override
   Widget build(
-    BuildContext context,
-  ) {
+      BuildContext context,
+      ) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -192,123 +194,123 @@ class _RestaurantSelectionScreenState
       ),
       body: _loading
           ? const Center(
-              child:
-                  CircularProgressIndicator(),
-            )
+        child:
+        CircularProgressIndicator(),
+      )
           : _restaurants.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No nearby restaurants found.',
-                  ),
-                )
-              : ListView.builder(
-                  padding:
-                      const EdgeInsets.all(16),
-                  itemCount:
-                      _restaurants.length,
-                  itemBuilder:
-                      (context, index) {
-                    final restaurant =
-                        _restaurants[index];
-
-                    final id =
-                        restaurant['id']
-                            .toString();
-
-                    final selected =
-                        _selectedRestaurantId ==
-                            id;
-
-                    final address =
-                        restaurant[
-                                    'formattedAddress']
-                                ?.toString() ??
-                            '';
-
-                    final rating =
-                        (restaurant[
-                                    'rating']
-                                as num?)
-                            ?.toDouble() ??
-                        0;
-
-                    final nearPlace =
-                        restaurant[
-                                    'nearPlace']
-                                ?.toString() ??
-                            '';
-
-                    return Card(
-                      margin:
-                          const EdgeInsets.only(
-                        bottom: 12,
-                      ),
-                      child: ListTile(
-                        leading: Icon(
-                          selected
-                              ? Icons
-                                  .radio_button_checked
-                              : Icons.restaurant,
-                          color:
-                              Colors.deepOrange,
-                        ),
-                        title: Text(
-                          _getName(
-                            restaurant,
-                          ),
-                          style:
-                              const TextStyle(
-                            fontWeight:
-                                FontWeight.bold,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '$address\n'
-                          '${_getPrice(restaurant)}\n'
-                          '⭐ $rating\n'
-                          'Near: $nearPlace',
-                        ),
-                        isThreeLine: true,
-                        onTap: () {
-                          setState(() {
-                            if (selected) {
-                              _selectedRestaurantId =
-                                  null;
-                            } else {
-                              _selectedRestaurantId =
-                                  id;
-                            }
-                          });
-                        },
-                      ),
-                    );
-                  },
-                ),
-      bottomNavigationBar:
-          Padding(
+          ? const Center(
+        child: Text(
+          'No nearby restaurants found.',
+        ),
+      )
+          : ListView.builder(
         padding:
-            const EdgeInsets.all(16),
+        const EdgeInsets.all(16),
+        itemCount:
+        _restaurants.length,
+        itemBuilder:
+            (context, index) {
+          final restaurant =
+          _restaurants[index];
+
+          final id =
+          restaurant['id']
+              .toString();
+
+          final selected =
+              _selectedRestaurantId ==
+                  id;
+
+          final address =
+              restaurant[
+              'formattedAddress']
+                  ?.toString() ??
+                  '';
+
+          final rating =
+              (restaurant[
+              'rating']
+              as num?)
+                  ?.toDouble() ??
+                  0;
+
+          final nearPlace =
+              restaurant[
+              'nearPlace']
+                  ?.toString() ??
+                  '';
+
+          return Card(
+            margin:
+            const EdgeInsets.only(
+              bottom: 12,
+            ),
+            child: ListTile(
+              leading: Icon(
+                selected
+                    ? Icons
+                    .radio_button_checked
+                    : Icons.restaurant,
+                color:
+                Colors.deepOrange,
+              ),
+              title: Text(
+                _getName(
+                  restaurant,
+                ),
+                style:
+                const TextStyle(
+                  fontWeight:
+                  FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                '$address\n'
+                    '${_getPrice(restaurant)}\n'
+                    '⭐ $rating\n'
+                    'Near: $nearPlace',
+              ),
+              isThreeLine: true,
+              onTap: () {
+                setState(() {
+                  if (selected) {
+                    _selectedRestaurantId =
+                    null;
+                  } else {
+                    _selectedRestaurantId =
+                        id;
+                  }
+                });
+              },
+            ),
+          );
+        },
+      ),
+      bottomNavigationBar:
+      Padding(
+        padding:
+        const EdgeInsets.all(16),
         child: Column(
           mainAxisSize:
-              MainAxisSize.min,
+          MainAxisSize.min,
           children: [
             Text(
               _selectedRestaurantId ==
-                      null
+                  null
                   ? 'No restaurant selected (optional)'
                   : 'Restaurant selected',
             ),
             const SizedBox(height: 8),
             SizedBox(
               width:
-                  double.infinity,
+              double.infinity,
               child: ElevatedButton(
                 onPressed:
-                    _loading
-                        ? null
-                        : _continue,
+                _loading
+                    ? null
+                    : _continue,
                 child: const Text(
-                  'Continue',
+                  'Continue to Transport',
                 ),
               ),
             ),
