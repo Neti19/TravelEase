@@ -19,8 +19,10 @@ class PlacesService {
   }
 
   Future<List<Map<String, dynamic>>> autocomplete(
-      String input,
-      ) async {
+    String input, {
+    double? latitude,
+    double? longitude,
+  }) async {
     _checkKey();
 
     final response = await http.post(
@@ -36,6 +38,16 @@ class PlacesService {
       body: jsonEncode({
         'input': input,
         'includedRegionCodes': ['in'],
+        if (latitude != null && longitude != null)
+          'locationBias': {
+            'circle': {
+              'center': {
+                'latitude': latitude,
+                'longitude': longitude,
+              },
+              'radius': 50000.0,
+            },
+          },
       }),
     );
 
@@ -324,6 +336,37 @@ class PlacesService {
   }) async {
     _checkKey();
 
+    // Reverse geocoding gives the user a readable locality on Flutter Web,
+    // where the native geocoding plugin is not available.
+    try {
+      final reverseResponse = await http.get(
+        Uri.https(
+          'maps.googleapis.com',
+          '/maps/api/geocode/json',
+          {
+            'latlng': '$latitude,$longitude',
+            'key': _apiKey,
+            'language': 'en',
+          },
+        ),
+      ).timeout(const Duration(seconds: 8));
+
+      if (reverseResponse.statusCode == 200) {
+        final reverseData =
+            jsonDecode(reverseResponse.body) as Map<String, dynamic>;
+        final results = reverseData['results'] as List<dynamic>? ?? [];
+        if (results.isNotEmpty) {
+          final result = results.first as Map<String, dynamic>;
+          final address = result['formatted_address']?.toString();
+          if (address != null && address.trim().isNotEmpty) {
+            return address;
+          }
+        }
+      }
+    } catch (_) {
+      // Continue with Places search below; callers can still show coordinates.
+    }
+
     final response = await http.post(
       Uri.parse('$_baseUrl/places:searchText'),
       headers: {
@@ -364,7 +407,8 @@ class PlacesService {
         data['places'] as List<dynamic>? ?? [];
 
     if (places.isEmpty) {
-      return 'Unknown location';
+      return 'Location near ${latitude.toStringAsFixed(5)}, '
+          '${longitude.toStringAsFixed(5)}';
     }
 
     final place =
@@ -381,8 +425,10 @@ class PlacesService {
     final displayName =
     place['displayName'] as Map<String, dynamic>?;
 
-    return displayName?['text']?.toString() ??
-        'Unknown location';
+    final name = displayName?['text']?.toString();
+    if (name != null && name.trim().isNotEmpty) return name;
+    return 'Location near ${latitude.toStringAsFixed(5)}, '
+        '${longitude.toStringAsFixed(5)}';
   }
   // ------------------------------------------------------------
   // NEARBY RESTAURANTS

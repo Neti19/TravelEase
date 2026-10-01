@@ -1,40 +1,54 @@
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'firebase_options.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 import 'app_routes.dart';
+import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await dotenv.load(fileName: '.env');
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
   runApp(const TravelEaseApp());
 }
+
 class TravelEaseApp extends StatelessWidget {
   const TravelEaseApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Travel Planner',
+      title: 'TravelEase',
       debugShowCheckedModeBanner: false,
+
       theme: ThemeData(
+        useMaterial3: true,
+
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E88E5),
+          seedColor: const Color(0xFF1677FF),
           brightness: Brightness.light,
         ),
-        useMaterial3: true,
+
+        scaffoldBackgroundColor: const Color(0xFFF7FAFC),
+
+        fontFamily: 'Roboto',
+
         appBarTheme: const AppBarTheme(
-          centerTitle: true,
           elevation: 0,
+          centerTitle: false,
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
         ),
       ),
-      // Set initial screen route
-      initialRoute: AppRoutes.login,
-      // Connect dynamic routing handler
+
+      // TravelEase now opens with the landing/home experience.
+      initialRoute: AppRoutes.home,
+
       onGenerateRoute: AppRoutes.generateRoute,
     );
   }

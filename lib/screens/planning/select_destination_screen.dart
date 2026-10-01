@@ -132,6 +132,8 @@ class _SelectDestinationScreenState
                 .toDouble(),
           ),
         );
+      } else {
+        await _loadNearbyDestinations(_mapCenter);
       }
     } catch (e) {
       if (!mounted) return;
@@ -169,6 +171,8 @@ class _SelectDestinationScreenState
           final results =
           await _placesService.autocomplete(
             value.trim(),
+            latitude: _mapCenter.latitude,
+            longitude: _mapCenter.longitude,
           );
 
           if (!mounted) return;
@@ -228,18 +232,24 @@ class _SelectDestinationScreenState
         return;
       }
 
-      final name =
-          displayName?['text']?.toString() ??
-              suggestion['mainText']?.toString() ??
-              suggestion['description']?.toString() ??
-              'Selected place';
+      final name = <dynamic>[
+        displayName?['text'],
+        suggestion['mainText'],
+        suggestion['description'],
+      ]
+          .whereType<String>()
+          .map((value) => value.trim())
+          .firstWhere((value) => value.isNotEmpty, orElse: () => 'Selected place');
 
-      final address =
+      final suggestedAddress =
           details['formattedAddress']
               ?.toString() ??
               suggestion['secondaryText']
                   ?.toString() ??
               '';
+      final address = suggestedAddress.trim().isEmpty
+          ? name
+          : suggestedAddress;
 
       await _addDestination(
         name: name,
@@ -279,12 +289,20 @@ class _SelectDestinationScreenState
        * A map tap can now directly become a destination.
        */
 
-      final name =
-          'Map location';
-
-      final address =
-          'Lat: ${position.latitude.toStringAsFixed(6)}, '
-          'Lng: ${position.longitude.toStringAsFixed(6)}';
+      var address = '';
+      try {
+        address = await _placesService.getLocationName(
+          latitude: position.latitude,
+          longitude: position.longitude,
+        );
+      } catch (_) {
+        // Keep map selection available when reverse geocoding is unavailable.
+      }
+      if (address.trim().isEmpty ||
+          address.toLowerCase().startsWith('location near ')) {
+        address = 'Selected map point';
+      }
+      final name = address.split(',').first.trim();
 
       await _addDestination(
         name: name,
@@ -600,10 +618,11 @@ class _SelectDestinationScreenState
         displayName?['text']?.toString() ??
             'Nearby destination';
 
-    final address =
+    final formattedAddress =
         place['formattedAddress']
             ?.toString() ??
             '';
+    final address = formattedAddress.trim().isEmpty ? name : formattedAddress;
 
     await _addDestination(
       name: name,
@@ -650,6 +669,7 @@ class _SelectDestinationScreenState
       setState(() {
         _nearbyDestinations = [];
       });
+      await _loadNearbyDestinations(_mapCenter);
     }
   }
 
@@ -679,6 +699,10 @@ class _SelectDestinationScreenState
       await TripService().updateTrip(
         tripId,
         {
+          'destination': _selectedDestinations.values
+              .map((item) => item['name']?.toString().trim() ?? '')
+              .where((name) => name.isNotEmpty)
+              .join(', '),
           'destinationCount':
           _selectedDestinations.length,
           'updatedAt':
@@ -789,7 +813,7 @@ class _SelectDestinationScreenState
               zoom: 10,
             ),
             markers: _markers(),
-            myLocationEnabled: true,
+            myLocationEnabled: false,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             onMapCreated:
@@ -881,9 +905,11 @@ class _SelectDestinationScreenState
                   ),
                 ),
 
-                if (_suggestions
-                    .isNotEmpty)
-                  Container(
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  child: _suggestions.isNotEmpty
+                      ? Container(
                     margin:
                     const EdgeInsets.only(
                       top: 4,
@@ -961,6 +987,25 @@ class _SelectDestinationScreenState
                         );
                       },
                     ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+
+                if (_suggestions.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 9, left: 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.auto_awesome, size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Step 2 - Add stops near your starting point',
+                            style: Theme.of(context).textTheme.labelMedium,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
               ],
             ),
@@ -990,8 +1035,9 @@ class _SelectDestinationScreenState
           // NEARBY DESTINATIONS
           // --------------------------------------------------
 
-          if (_selectedDestinations
-              .isNotEmpty)
+          if (_loadingNearby ||
+              _nearbyDestinations.isNotEmpty ||
+              _selectedDestinations.isNotEmpty)
             Positioned(
               left: 12,
               right: 12,
@@ -1032,12 +1078,15 @@ class _SelectDestinationScreenState
                           width: 8,
                         ),
                         Expanded(
-                          child: Text(
-                            '${_selectedDestinations.length} destination(s) selected',
-                            style:
-                            const TextStyle(
-                              fontWeight:
-                              FontWeight.bold,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            child: Text(
+                              '${_selectedDestinations.length} '
+                              '${_selectedDestinations.length == 1 ? 'stop' : 'stops'} selected',
+                              key: ValueKey(_selectedDestinations.length),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ),

@@ -10,51 +10,50 @@ class ExpenseService {
   final FirebaseAuth _auth =
       FirebaseAuth.instance;
 
-  String? get _userId =>
-      _auth.currentUser?.uid;
+  User? get _currentUser =>
+      _auth.currentUser;
 
   CollectionReference<Map<String, dynamic>>
-  _expenseCollection() {
-    final userId = _userId;
-
-    if (userId == null) {
+  _expenseCollection(String tripId) {
+    if (_currentUser == null) {
       throw Exception(
         'User is not logged in.',
       );
     }
 
+    if (tripId.trim().isEmpty) {
+      throw Exception(
+        'Trip ID is missing.',
+      );
+    }
+
     return _firestore
-        .collection('users')
-        .doc(userId)
+        .collection('trips')
+        .doc(tripId)
         .collection('expenses');
   }
 
-  // Get expenses belonging to one specific trip.
+  // Get all expenses belonging to one trip.
   Stream<List<Expense>> getExpenses(
       String tripId,
       ) {
-    return _expenseCollection()
+    return _expenseCollection(tripId)
         .orderBy(
       'date',
       descending: true,
     )
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs
-          .map((doc) {
-        return Expense.fromMap(
-          doc.data(),
-        );
-      })
-          .where(
-            (expense) =>
-        expense.tripId == tripId,
-      )
-          .toList();
+      return snapshot.docs.map((doc) {
+        return Expense.fromMap({
+          ...doc.data(),
+          'id': doc.id,
+        });
+      }).toList();
     });
   }
 
-  // Add a new expense to a specific trip.
+  // Add a shared trip expense.
   Future<void> addExpense({
     required String tripId,
     required String title,
@@ -62,27 +61,76 @@ class ExpenseService {
     required String category,
     required String note,
     required DateTime date,
+    required Map<String, double> splitBetween,
+    required Map<String, String> splitBetweenNames,
   }) async {
+    final user = _currentUser;
+
+    if (user == null) {
+      throw Exception(
+        'User is not logged in.',
+      );
+    }
+
     if (tripId.trim().isEmpty) {
       throw Exception(
         'Trip ID is missing.',
       );
     }
 
-    final collection =
-    _expenseCollection();
+    if (title.trim().isEmpty) {
+      throw Exception(
+        'Expense title is required.',
+      );
+    }
 
-    final document =
-    collection.doc();
+    if (amount <= 0) {
+      throw Exception(
+        'Expense amount must be greater than zero.',
+      );
+    }
+
+    if (splitBetween.isEmpty) {
+      throw Exception(
+        'Select at least one traveler to split the expense with.',
+      );
+    }
+
+    final totalShares = splitBetween.values.fold<double>(
+      0,
+          (sum, share) => sum + share,
+    );
+
+    if ((totalShares - amount).abs() > 0.01) {
+      throw Exception(
+        'The split amounts do not equal the expense total.',
+      );
+    }
+
+    final collection =
+    _expenseCollection(tripId);
+
+    final document = collection.doc();
+
+    final paidByName =
+    user.displayName?.trim().isNotEmpty == true
+        ? user.displayName!.trim()
+        : user.email?.trim().isNotEmpty == true
+        ? user.email!.trim()
+        : 'Traveler';
 
     final expense = Expense(
       id: document.id,
       tripId: tripId,
-      title: title,
+      title: title.trim(),
       amount: amount,
       category: category,
-      note: note,
+      note: note.trim(),
       date: date,
+      paidBy: user.uid,
+      paidByName: paidByName,
+      splitBetween: splitBetween,
+      splitBetweenNames: splitBetweenNames,
     );
 
     await document.set(
@@ -90,11 +138,32 @@ class ExpenseService {
     );
   }
 
-  // Delete an expense.
-  Future<void> deleteExpense(
-      String expenseId,
-      ) async {
-    await _expenseCollection()
+  // Delete a shared trip expense.
+  Future<void> deleteExpense({
+    required String tripId,
+    required String expenseId,
+  }) async {
+    final user = _currentUser;
+
+    if (user == null) {
+      throw Exception(
+        'User is not logged in.',
+      );
+    }
+
+    if (tripId.trim().isEmpty) {
+      throw Exception(
+        'Trip ID is missing.',
+      );
+    }
+
+    if (expenseId.trim().isEmpty) {
+      throw Exception(
+        'Expense ID is missing.',
+      );
+    }
+
+    await _expenseCollection(tripId)
         .doc(expenseId)
         .delete();
   }

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../app_routes.dart';
 import '../../services/route_service.dart';
@@ -122,90 +123,53 @@ class _MapNavigationScreenState
       );
 
       // --------------------------------------------------------
-      // GET SELECTED TOURIST PLACES
+      // GET SAVED DESTINATIONS AND SELECTED PLACES
       // --------------------------------------------------------
 
+      final destinations =
+          await _destinationService.getDestinations(tripId);
       final selectedPlaces =
           await _destinationService.getSelectedPlaces(
         tripId,
       );
 
-      if (selectedPlaces.isEmpty) {
-        throw Exception(
-          'No tourist places selected.',
-        );
-      }
-
       final routeStops = <RoutePoint>[];
 
+      // Include every saved trip destination, even when it did not match a
+      // preference or was not selected as a recommended tourist spot.
+      for (final place in destinations) {
+        _addRouteStop(routeStops, place, 'destination');
+      }
       for (final place in selectedPlaces) {
-        final latitude =
-            (place['latitude'] as num?)?.toDouble();
+        _addRouteStop(routeStops, place, 'tourist_spot');
+      }
 
-        final longitude =
-            (place['longitude'] as num?)?.toDouble();
-
-        if (latitude == null ||
-            longitude == null) {
-          continue;
-        }
-
-        routeStops.add(
-          RoutePoint(
-            id: place['id']?.toString() ??
-                'place_${routeStops.length}',
-            name: place['name']?.toString() ??
-                'Tourist Place',
-            latitude: latitude,
-            longitude: longitude,
-            type: 'tourist_spot',
-          ),
-        );
+      if (routeStops.isEmpty) {
+        throw Exception('Add at least one destination before creating a route.');
       }
 
       // --------------------------------------------------------
       // GET SELECTED HOTEL
       // --------------------------------------------------------
 
-      final selectedHotel =
-          trip['selectedHotel'];
+      final selectedHotel = trip['selectedHotel'];
 
       if (selectedHotel is Map) {
-        final location =
-            selectedHotel['location'];
-
+        final location = selectedHotel['location'];
         if (location is Map) {
-          final latitude =
-              (location['latitude'] as num?)?.toDouble();
-
-          final longitude =
-              (location['longitude'] as num?)?.toDouble();
-
-          if (latitude != null &&
-              longitude != null) {
-            final displayName =
-                selectedHotel['displayName'];
-
-            String hotelName =
-                'Selected Hotel';
-
-            if (displayName is Map &&
-                displayName['text'] != null) {
-              hotelName =
-                  displayName['text'].toString();
-            }
-
-            routeStops.add(
-              RoutePoint(
-                id:
-                    selectedHotel['id']?.toString() ??
-                        'hotel',
-                name: hotelName,
-                latitude: latitude,
-                longitude: longitude,
-                type: 'hotel',
-              ),
-            );
+          final latitude = (location['latitude'] as num?)?.toDouble();
+          final longitude = (location['longitude'] as num?)?.toDouble();
+          if (latitude != null && longitude != null) {
+            final displayName = selectedHotel['displayName'];
+            routeStops.add(RoutePoint(
+              id: selectedHotel['id']?.toString() ?? 'hotel',
+              name: displayName is Map && displayName['text'] != null
+                  ? displayName['text'].toString()
+                  : 'Selected Hotel',
+              latitude: latitude,
+              longitude: longitude,
+              type: 'hotel',
+            ));
           }
         }
       }
@@ -214,59 +178,30 @@ class _MapNavigationScreenState
       // GET SELECTED RESTAURANT
       // --------------------------------------------------------
 
-      final selectedRestaurant =
-          trip['selectedRestaurant'];
+      final selectedRestaurant = trip['selectedRestaurant'];
 
       if (selectedRestaurant is Map) {
-        final location =
-            selectedRestaurant['location'];
-
+        final location = selectedRestaurant['location'];
         if (location is Map) {
-          final latitude =
-              (location['latitude'] as num?)?.toDouble();
-
-          final longitude =
-              (location['longitude'] as num?)?.toDouble();
-
-          if (latitude != null &&
-              longitude != null) {
-            final displayName =
-                selectedRestaurant['displayName'];
-
-            String restaurantName =
-                'Selected Restaurant';
-
-            if (displayName is Map &&
-                displayName['text'] != null) {
-              restaurantName =
-                  displayName['text'].toString();
-            }
-
-            routeStops.add(
-              RoutePoint(
-                id:
-                    selectedRestaurant['id']
-                            ?.toString() ??
-                        'restaurant',
-                name: restaurantName,
-                latitude: latitude,
-                longitude: longitude,
-                type: 'restaurant',
-              ),
-            );
+          final latitude = (location['latitude'] as num?)?.toDouble();
+          final longitude = (location['longitude'] as num?)?.toDouble();
+          if (latitude != null && longitude != null) {
+            final displayName = selectedRestaurant['displayName'];
+            routeStops.add(RoutePoint(
+              id: selectedRestaurant['id']?.toString() ?? 'restaurant',
+              name: displayName is Map && displayName['text'] != null
+                  ? displayName['text'].toString()
+                  : 'Selected Restaurant',
+              latitude: latitude,
+              longitude: longitude,
+              type: 'restaurant',
+            ));
           }
         }
       }
 
-      // --------------------------------------------------------
-      // CHECK ROUTE STOPS
-      // --------------------------------------------------------
 
-      if (routeStops.isEmpty) {
-        throw Exception(
-          'No valid locations available for routing.',
-        );
-      }
+
 
       // --------------------------------------------------------
       // CALCULATE GOOGLE ROUTES API ROUTE
@@ -332,6 +267,44 @@ class _MapNavigationScreenState
         _error = e.toString();
       });
     }
+  }
+
+  void _addRouteStop(
+    List<RoutePoint> routeStops,
+    Map<String, dynamic> place,
+    String type,
+  ) {
+    final latitude = (place['latitude'] as num?)?.toDouble();
+    final longitude = (place['longitude'] as num?)?.toDouble();
+    if (latitude == null || longitude == null) return;
+
+    final duplicate = routeStops.any((stop) =>
+        stop.type != 'hotel' &&
+        stop.type != 'restaurant' &&
+        Geolocator.distanceBetween(
+              stop.latitude,
+              stop.longitude,
+              latitude,
+              longitude,
+            ) <
+            30);
+    if (duplicate) return;
+
+    final rawName = place['name']?.toString().trim() ?? '';
+    final address = place['address']?.toString().trim() ?? '';
+    final name = rawName.isNotEmpty
+        ? rawName
+        : address.isNotEmpty
+            ? address.split(',').first
+            : 'Destination ${routeStops.length + 1}';
+
+    routeStops.add(RoutePoint(
+      id: place['id']?.toString() ?? 'stop_${routeStops.length}',
+      name: name,
+      latitude: latitude,
+      longitude: longitude,
+      type: type,
+    ));
   }
 
   // ============================================================
@@ -467,6 +440,9 @@ class _MapNavigationScreenState
     switch (type) {
       case 'start':
         return 'Starting Location';
+
+      case 'destination':
+        return 'Trip Destination';
 
       case 'tourist_spot':
         return 'Tourist Place';

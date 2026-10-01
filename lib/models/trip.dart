@@ -1,6 +1,7 @@
 
 class Trip {
   final String id;
+  final String name;
   final String startLocation;
   final double startLatitude;
   final double startLongitude;
@@ -14,6 +15,7 @@ class Trip {
 
   Trip({
     required this.id,
+    this.name = '',
     required this.startLocation,
     required this.startLatitude,
     required this.startLongitude,
@@ -28,6 +30,7 @@ class Trip {
 
   Map<String, dynamic> toMap() {
     return {
+      'name': name,
       'startLocation': startLocation,
       'startLatitude': startLatitude,
       'startLongitude': startLongitude,
@@ -49,20 +52,32 @@ class Trip {
   }
 
   factory Trip.fromJson(Map<String, dynamic> json) {
+    DateTime readDate(dynamic value) {
+      if (value is DateTime) return value;
+      // Firestore Timestamp is intentionally handled without importing
+      // cloud_firestore into this plain data model.
+      if (value != null && value is! String && value is! num) {
+        try {
+          final dynamic date = (value as dynamic).toDate();
+          if (date is DateTime) return date;
+        } catch (_) {
+          // Fall through to ISO string parsing for older/local data.
+        }
+      }
+      return DateTime.tryParse(value?.toString() ?? '') ?? DateTime.now();
+    }
+
     return Trip(
       id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
       startLocation: json['startLocation']?.toString() ?? '',
       startLatitude:
           (json['startLatitude'] as num?)?.toDouble() ?? 0.0,
       startLongitude:
           (json['startLongitude'] as num?)?.toDouble() ?? 0.0,
       destination: json['destination']?.toString() ?? '',
-      startDate: DateTime.parse(
-        json['startDate'].toString(),
-      ),
-      endDate: DateTime.parse(
-        json['endDate'].toString(),
-      ),
+      startDate: readDate(json['startDate']),
+      endDate: readDate(json['endDate']),
       numberOfDays:
           (json['numberOfDays'] as num?)?.toInt() ?? 0,
       travelersCount:

@@ -26,6 +26,12 @@ import 'screens/itinerary/notifications_screen.dart';
 import 'screens/map/map_navigation_screen.dart';
 
 import 'screens/trips/my_trips_screen.dart';
+import 'screens/trips/trip_workspace_screen.dart';
+import 'screens/dashboard/personal_dashboard_screen.dart';
+import 'screens/discovery/help_me_choose_screen.dart';
+import 'screens/discovery/destination_recommendations_screen.dart';
+import 'screens/trips/invite_people_screen.dart';
+import 'screens/trips/join_trip_screen.dart';
 
 class AppRoutes {
   static const String login = '/';
@@ -56,6 +62,13 @@ class AppRoutes {
   static const String expenseTracker =
       '/expense-tracker';
   static const String myTrips = '/my-trips';
+  static const String tripWorkspace = '/trip-workspace';
+  static const String invitePeople = '/invite-people';
+  static const String joinTrip = '/join-trip';
+  static const String dashboard = '/dashboard';
+  static const String helpMeChoose = '/help-me-choose';
+  static const String destinationRecommendations =
+      '/destination-recommendations';
 
   static Route<dynamic> generateRoute(
       RouteSettings settings,
@@ -398,6 +411,92 @@ class AppRoutes {
           const MyTripsScreen(),
         );
 
+      case tripWorkspace:
+        final args = settings.arguments;
+
+        String tripId = '';
+
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString().trim();
+        } else if (args is String) {
+          tripId = args.trim();
+        }
+
+        if (tripId.isEmpty) {
+          return MaterialPageRoute(
+            builder: (_) => const Scaffold(
+              body: Center(
+                child: Text(
+                  'Trip ID is missing.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
+        return MaterialPageRoute(
+          builder: (_) => TripWorkspaceScreen(
+            tripId: tripId,
+          ),
+          settings: settings,
+        );
+      case invitePeople:
+        final args = settings.arguments;
+
+        String tripId = '';
+
+        if (args is Map && args['tripId'] != null) {
+          tripId = args['tripId'].toString().trim();
+        } else if (args is String) {
+          tripId = args.trim();
+        }
+
+        if (tripId.isEmpty) {
+          return MaterialPageRoute(
+            builder: (_) => const Scaffold(
+              body: Center(
+                child: Text(
+                  'Trip ID is missing.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
+        return MaterialPageRoute(
+          builder: (_) => InvitePeopleScreen(
+            tripId: tripId,
+          ),
+          settings: settings,
+        );
+      case joinTrip:
+        return MaterialPageRoute(
+          builder: (_) => const JoinTripScreen(),
+          settings: settings,
+        );
+      case dashboard:
+        return MaterialPageRoute(
+          builder: (_) => const PersonalDashboardScreen(),
+        );
+      case helpMeChoose:
+        return MaterialPageRoute(
+          builder: (_) => const HelpMeChooseScreen(),
+          settings: settings,
+        );
+      case destinationRecommendations:
+        final args = settings.arguments as Map<String, dynamic>;
+
+        return MaterialPageRoute(
+          builder: (_) => DestinationRecommendationsScreen(
+            experience: args['experience'] as String,
+            travelerType: args['travelerType'] as String,
+            duration: args['duration'] as String,
+            budget: (args['budget'] as num).toDouble(),
+          ),
+          settings: settings,
+        );
       default:
         return MaterialPageRoute(
           builder: (_) =>

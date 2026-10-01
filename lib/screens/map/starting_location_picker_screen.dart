@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/places_service.dart';
 
 class StartingLocationPickerScreen extends StatefulWidget {
@@ -28,7 +28,6 @@ class _StartingLocationPickerScreenState
   String _address = 'Getting location...';
 
   bool _loadingCurrentLocation = false;
-  bool _isSaving = false;
 
   Set<Marker> _markers = {};
   String? _tripId;
@@ -83,24 +82,46 @@ class _StartingLocationPickerScreenState
   }
 
   Future<void> _getAddress(LatLng position) async {
+    String? locationName;
     try {
-      final locationName =
-      await _placesService.getLocationName(
-        latitude: position.latitude,
-        longitude: position.longitude,
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
       );
+      final place = placemarks.isEmpty ? null : placemarks.first;
+      final placemarkName = [
+        place?.name,
+        place?.subLocality,
+        place?.locality,
+        place?.administrativeArea,
+        place?.country,
+      ].whereType<String>().where((part) => part.trim().isNotEmpty).join(', ');
+      if (placemarkName.isNotEmpty) locationName = placemarkName;
+    } catch (_) {
+      // Use the Places reverse-geocoding fallback on web and plugin failures.
+    }
 
-      if (mounted) {
-        setState(() {
-          _address = locationName;
-        });
+    if (locationName == null || kIsWeb) {
+      try {
+        final apiName = await _placesService.getLocationName(
+          latitude: position.latitude,
+          longitude: position.longitude,
+        );
+        if (apiName.trim().isNotEmpty &&
+            !apiName.toLowerCase().startsWith('location near ')) {
+          locationName = apiName;
+        }
+      } catch (_) {
+        // Coordinate fallback below always keeps selection usable.
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _address = 'Unable to find location';
-        });
-      }
+    }
+
+    if (mounted &&
+        _selectedLocation.latitude == position.latitude &&
+        _selectedLocation.longitude == position.longitude) {
+      setState(() {
+        _address = locationName ?? 'Selected location';
+      });
     }
   }
   Future<void> _useCurrentLocation() async {
@@ -202,53 +223,15 @@ class _StartingLocationPickerScreenState
   }
 
   Future<void> _confirmLocation() async {
-    if (_tripId != null && _tripId!.isNotEmpty) {
-      setState(() {
-        _isSaving = true;
-      });
-
-      try {
-        await FirebaseFirestore.instance
-            .collection('trips')
-            .doc(_tripId)
-            .set(
-          {
-            'startingAddress': _address,
-            'startingLatitude':
-            _selectedLocation.latitude,
-            'startingLongitude':
-            _selectedLocation.longitude,
-            'updatedAt':
-            FieldValue.serverTimestamp(),
-          },
-          SetOptions(merge: true),
-        );
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(
-            SnackBar(
-              content: Text(
-                'Failed to update starting location: $e',
-              ),
-            ),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isSaving = false;
-          });
-        }
-      }
-    }
-
     if (mounted) {
+      final address = _address == 'Getting location...'
+          ? 'Selected location'
+          : _address;
       Navigator.pop(
         context,
         {
           'tripId': _tripId,
-          'address': _address,
+          'address': address,
           'latitude':
           _selectedLocation.latitude,
           'longitude':
@@ -274,7 +257,9 @@ class _StartingLocationPickerScreenState
               zoom: 12,
             ),
             markers: _markers,
-            myLocationEnabled: true,
+            // The map can be used without granting location permission;
+            // the explicit current-location action requests it when needed.
+            myLocationEnabled: false,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: true,
             onMapCreated: (controller) {
@@ -304,9 +289,7 @@ class _StartingLocationPickerScreenState
             right: 16,
             bottom: 100,
             child: FloatingActionButton(
-              onPressed:
-              _loadingCurrentLocation ||
-                  _isSaving
+              onPressed: _loadingCurrentLocation
                   ? null
                   : _useCurrentLocation,
               child: _loadingCurrentLocation
@@ -329,26 +312,9 @@ class _StartingLocationPickerScreenState
             left: 20,
             right: 20,
             child: ElevatedButton.icon(
-              onPressed:
-              _isSaving
-                  ? null
-                  : _confirmLocation,
-              icon: _isSaving
-                  ? const SizedBox(
-                width: 20,
-                height: 20,
-                child:
-                CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-                  : const Icon(Icons.check),
-              label: Text(
-                _isSaving
-                    ? 'Saving Location...'
-                    : 'Confirm Starting Location',
-              ),
+              onPressed: _confirmLocation,
+              icon: const Icon(Icons.check),
+              label: const Text('Confirm Starting Location'),
               style:
               ElevatedButton.styleFrom(
                 minimumSize:

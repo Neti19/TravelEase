@@ -17,25 +17,33 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _startLocationController =
-      TextEditingController();
+  TextEditingController();
+
+  final TextEditingController _tripNameController =
+  TextEditingController();
 
   final TextEditingController _daysController =
-      TextEditingController(text: '3');
+  TextEditingController(text: '3');
 
   final TextEditingController _travelersController =
-      TextEditingController(text: '1');
+  TextEditingController(text: '1');
 
   final TextEditingController _budgetController =
-      TextEditingController(text: '1000');
+  TextEditingController(text: '1000');
 
-  DateTime _startDate = DateTime.now().add(const Duration(days: 7));
+  DateTime _startDate =
+  DateTime.now().add(const Duration(days: 7));
 
   double? _startLatitude;
   double? _startLongitude;
 
+  // Prevents multiple trip creations from repeated button taps.
+  bool _isSaving = false;
+
   @override
   void dispose() {
     _startLocationController.dispose();
+    _tripNameController.dispose();
     _daysController.dispose();
     _travelersController.dispose();
     _budgetController.dispose();
@@ -47,7 +55,9 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
       context: context,
       initialDate: _startDate,
       firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      lastDate: DateTime.now().add(
+        const Duration(days: 365),
+      ),
     );
 
     if (picked != null) {
@@ -61,7 +71,8 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const StartingLocationPickerScreen(),
+        builder: (context) =>
+        const StartingLocationPickerScreen(),
       ),
     );
 
@@ -80,11 +91,15 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
   }
 
   Future<void> _proceed() async {
+    // Do nothing if a trip is already being created.
+    if (_isSaving) return;
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    if (_startLatitude == null || _startLongitude == null) {
+    if (_startLatitude == null ||
+        _startLongitude == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -100,20 +115,34 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please login before creating a trip.'),
+          content: Text(
+            'Please login before creating a trip.',
+          ),
         ),
       );
       return;
     }
 
+    // Lock the button before starting the Firestore operation.
+    setState(() {
+      _isSaving = true;
+    });
+
     try {
-      final numberOfDays = int.parse(_daysController.text);
-      final travelers = int.parse(_travelersController.text);
-      final budget = double.parse(_budgetController.text);
+      final numberOfDays =
+      int.parse(_daysController.text);
+
+      final travelers =
+      int.parse(_travelersController.text);
+
+      final budget =
+      double.parse(_budgetController.text);
 
       final trip = Trip(
         id: '',
-        startLocation: _startLocationController.text,
+        name: _tripNameController.text.trim(),
+        startLocation:
+        _startLocationController.text,
         startLatitude: _startLatitude!,
         startLongitude: _startLongitude!,
         destination: '',
@@ -127,7 +156,9 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
         selectedPreferenceIds: [],
       );
 
-      final tripId = await TripService().saveTrip(trip);
+      // This creates exactly ONE trip.
+      final tripId =
+      await TripService().saveTrip(trip);
 
       if (!mounted) return;
 
@@ -141,9 +172,16 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
     } catch (e) {
       if (!mounted) return;
 
+      // Allow retry if saving failed.
+      setState(() {
+        _isSaving = false;
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to save trip: $e'),
+          content: Text(
+            'Failed to save trip: $e',
+          ),
         ),
       );
     }
@@ -153,15 +191,44 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Step 1: Trip Details'),
+        title: const Text(
+          'Step 1: Trip Details',
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment:
+            CrossAxisAlignment.stretch,
             children: [
+              TextFormField(
+                controller: _tripNameController,
+                textCapitalization:
+                TextCapitalization.words,
+                decoration:
+                const InputDecoration(
+                  labelText: 'Trip Name',
+                  hintText:
+                  'e.g. Summer in Gujarat',
+                  prefixIcon:
+                  Icon(Icons.badge_outlined),
+                  border:
+                  OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null ||
+                      value.trim().isEmpty) {
+                    return 'Enter a name for this trip';
+                  }
+
+                  return null;
+                },
+              ),
+
+              const SizedBox(height: 16),
+
               const Text(
                 'Basic Information',
                 style: TextStyle(
@@ -173,20 +240,35 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
               const SizedBox(height: 16),
 
               InkWell(
-                onTap: _selectStartingLocation,
+                onTap: _isSaving
+                    ? null
+                    : _selectStartingLocation,
                 child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Starting Location',
-                    prefixIcon: Icon(Icons.location_on),
-                    suffixIcon: Icon(Icons.map),
-                    border: OutlineInputBorder(),
+                  decoration:
+                  const InputDecoration(
+                    labelText:
+                    'Starting Location',
+                    prefixIcon: Icon(
+                      Icons.location_on,
+                    ),
+                    suffixIcon: Icon(
+                      Icons.map,
+                    ),
+                    border:
+                    OutlineInputBorder(),
                   ),
                   child: Text(
-                    _startLocationController.text.isEmpty
+                    _startLocationController
+                        .text
+                        .isEmpty
                         ? 'Select location from map'
-                        : _startLocationController.text,
+                        : _startLocationController
+                        .text,
                     style: TextStyle(
-                      color: _startLocationController.text.isEmpty
+                      color:
+                      _startLocationController
+                          .text
+                          .isEmpty
                           ? Colors.grey
                           : Colors.black,
                     ),
@@ -197,28 +279,45 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
               const SizedBox(height: 16),
 
               ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Start Date'),
-                subtitle: Text(
-                  '${_startDate.toLocal()}'.split(' ')[0],
+                contentPadding:
+                EdgeInsets.zero,
+                title: const Text(
+                  'Start Date',
                 ),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () => _selectDate(context),
+                subtitle: Text(
+                  '${_startDate.toLocal()}'
+                      .split(' ')[0],
+                ),
+                trailing: const Icon(
+                  Icons.calendar_today,
+                ),
+                onTap: _isSaving
+                    ? null
+                    : () => _selectDate(
+                  context,
+                ),
               ),
 
               const SizedBox(height: 16),
 
               TextFormField(
                 controller: _daysController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Number of Days',
-                  prefixIcon: Icon(Icons.wb_sunny_outlined),
-                  border: OutlineInputBorder(),
+                keyboardType:
+                TextInputType.number,
+                decoration:
+                const InputDecoration(
+                  labelText:
+                  'Number of Days',
+                  prefixIcon: Icon(
+                    Icons.wb_sunny_outlined,
+                  ),
+                  border:
+                  OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null ||
-                      int.tryParse(value) == null) {
+                      int.tryParse(value) ==
+                          null) {
                     return 'Enter valid days';
                   }
 
@@ -233,16 +332,24 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
               const SizedBox(height: 16),
 
               TextFormField(
-                controller: _travelersController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Number of Travelers',
-                  prefixIcon: Icon(Icons.people_outline),
-                  border: OutlineInputBorder(),
+                controller:
+                _travelersController,
+                keyboardType:
+                TextInputType.number,
+                decoration:
+                const InputDecoration(
+                  labelText:
+                  'Number of Travelers',
+                  prefixIcon: Icon(
+                    Icons.people_outline,
+                  ),
+                  border:
+                  OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null ||
-                      int.tryParse(value) == null) {
+                      int.tryParse(value) ==
+                          null) {
                     return 'Enter valid count';
                   }
 
@@ -258,15 +365,22 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
 
               TextFormField(
                 controller: _budgetController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Estimated Budget (₹)',
-                  prefixIcon: Icon(Icons.currency_rupee),
-                  border: OutlineInputBorder(),
+                keyboardType:
+                TextInputType.number,
+                decoration:
+                const InputDecoration(
+                  labelText:
+                  'Estimated Budget (₹)',
+                  prefixIcon: Icon(
+                    Icons.currency_rupee,
+                  ),
+                  border:
+                  OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null ||
-                      double.tryParse(value) == null) {
+                      double.tryParse(value) ==
+                          null) {
                     return 'Enter valid budget';
                   }
 
@@ -281,11 +395,25 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
               const SizedBox(height: 28),
 
               ElevatedButton(
-                onPressed: _proceed,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                onPressed:
+                _isSaving ? null : _proceed,
+                style:
+                ElevatedButton.styleFrom(
+                  padding:
+                  const EdgeInsets.symmetric(
+                    vertical: 16,
+                  ),
                 ),
-                child: const Text(
+                child: _isSaving
+                    ? const SizedBox(
+                  height: 22,
+                  width: 22,
+                  child:
+                  CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                  ),
+                )
+                    : const Text(
                   'Next: Choose Destination',
                 ),
               ),
