@@ -138,6 +138,7 @@ class PlacesService {
     required double latitude,
     required double longitude,
     int pageSize = 8,
+    bool detailed = false,
   }) async {
     _checkKey();
 
@@ -151,7 +152,8 @@ class PlacesService {
             'places.displayName,'
             'places.formattedAddress,'
             'places.location,'
-            'places.types',
+            'places.types'
+            '${detailed ? ',places.rating,places.userRatingCount,places.priceLevel,places.priceRange,places.regularOpeningHours' : ''}',
       },
       body: jsonEncode({
         'textQuery': query,
@@ -440,6 +442,8 @@ class PlacesService {
     required double longitude,
     double radius = 5000,
     int maxResultCount = 20,
+    List<String> includedTypes = const ['restaurant'],
+    bool includeOpeningHours = false,
   }) async {
     _checkKey();
 
@@ -458,10 +462,11 @@ class PlacesService {
             'places.priceLevel,'
             'places.priceRange,'
             'places.types,'
-            'places.googleMapsUri',
+            'places.googleMapsUri'
+            '${includeOpeningHours ? ',places.regularOpeningHours' : ''}',
       },
       body: jsonEncode({
-        'includedTypes': ['restaurant'],
+        'includedTypes': includedTypes,
         'maxResultCount': maxResultCount,
         'rankPreference': 'DISTANCE',
         'locationRestriction': {

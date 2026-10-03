@@ -1,6 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
+import '../../models/hotel.dart';
+import '../../models/place_map_reader.dart';
+import '../../models/restaurant.dart';
+import '../../services/day_planner.dart';
 import '../../services/restaurant_service.dart';
 import '../../services/trip_destination_service.dart';
 import '../../services/trip_service.dart';
@@ -28,9 +33,16 @@ class _RestaurantSelectionScreenState
 
   final TripService _tripService = TripService();
 
+  // Flattened list of every recommendation (used for the empty check).
   List<Map<String, dynamic>> _restaurants = [];
 
-  String? _selectedRestaurantId;
+  // One slot per day + meal, each with its own nearby options.
+  List<_MealSlot> _slots = [];
+
+  // slot key ("1_lunch") -> selected restaurant id
+  final Map<String, String> _selectedBySlot = {};
+
+  bool _includeBreakfast = false;
 
   bool _loading = true;
   bool _saving = false;
@@ -41,28 +53,233 @@ class _RestaurantSelectionScreenState
     _loadRestaurants();
   }
 
+  static const double _foodBudgetShare = 0.25;
+
+  Map<String, Map<String, dynamic>> _choicesFromState() {
+    final out = <String, Map<String, dynamic>>{};
+    for (final slot in _slots) {
+      final id = _selectedBySlot[slot.key];
+      if (id == null) continue;
+      for (final r in slot.options) {
+        if (PlaceMap.id(r) == id) {
+          out[slot.key] = r;
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  DateTime _mealTime(DateTime tripStart, int day, MealType meal) {
+    final base = DateTime(tripStart.year, tripStart.month, tripStart.day)
+        .add(Duration(days: day - 1));
+    switch (meal) {
+      case MealType.breakfast:
+        return DateTime(base.year, base.month, base.day, 8, 30);
+      case MealType.lunch:
+        return DateTime(base.year, base.month, base.day, 13, 0);
+      case MealType.dinner:
+        return DateTime(base.year, base.month, base.day, 19, 30);
+    }
+  }
+
   Future<void> _loadRestaurants() async {
     try {
+      final trip = await _tripService.getTrip(widget.tripId);
+      if (trip == null) throw Exception('Trip not found.');
+
+      final rawSnapshot = await FirebaseFirestore.instance
+          .collection('trips')
+          .doc(widget.tripId)
+          .get();
+      final tripData = rawSnapshot.data() ?? <String, dynamic>{};
+
       final selectedPlaces =
       await _destinationService.getSelectedPlaces(
         widget.tripId,
       );
 
-      if (selectedPlaces.isEmpty) {
+      final places = <PlannerPlace>[];
+      for (final map in selectedPlaces) {
+        final place = PlannerPlace.fromMap(map);
+        if (place != null) places.add(place);
+      }
+
+      if (places.isEmpty) {
         throw Exception(
           'No tourist places selected.',
         );
       }
 
-      final restaurants =
-      await _restaurantService.getRestaurantsNearPlaces(
-        selectedPlaces: selectedPlaces,
+      final days = trip.numberOfDays < 1 ? 1 : trip.numberOfDays;
+      final travelers = trip.travelersCount < 1 ? 1 : trip.travelersCount;
+
+      final clusters = DayPlanner.clusterIntoDays(
+        places: places,
+        numberOfDays: days,
+        startLatitude: trip.startLatitude,
+        startLongitude: trip.startLongitude,
       );
+
+      final hotelPlans = HotelPlan.fromTrip(
+        tripData,
+        numberOfDays: days,
+      );
+
+      // "Food" in the saved preferences => show a few more options.
+      final prefs = tripData['preferences'];
+      final foodLover = prefs is List &&
+          prefs.any((p) => p.toString().toLowerCase().contains('food'));
+      final limit = foodLover ? 8 : 5;
+
+      final budgetPerMeal = trip.budget > 0
+          ? trip.budget * _foodBudgetShare / (days * 2.5 * travelers)
+          : 0.0;
+
+      // ---- decide WHERE the traveller is at each meal ----
+      final planned = <_MealSlot>[];
+
+      for (final cluster in clusters) {
+        if (cluster.places.isEmpty) continue;
+        final dayPlaces = cluster.places;
+        final hotel = HotelPlan.forDay(hotelPlans, cluster.dayNumber)?.hotel;
+        final hotelLat = hotel == null ? null : PlaceMap.latitude(hotel);
+        final hotelLng = hotel == null ? null : PlaceMap.longitude(hotel);
+
+        if (_includeBreakfast) {
+          // Breakfast: near the hotel, else near the first stop.
+          final fallback = dayPlaces.first;
+          planned.add(
+            _MealSlot(
+              day: cluster.dayNumber,
+              meal: MealType.breakfast,
+              nearName: hotel != null
+                  ? PlaceMap.name(hotel)
+                  : fallback.name,
+              latitude: hotelLat ?? fallback.latitude,
+              longitude: hotelLng ?? fallback.longitude,
+              time: _mealTime(
+                trip.startDate,
+                cluster.dayNumber,
+                MealType.breakfast,
+              ),
+            ),
+          );
+        }
+
+        // Lunch: near the stop reached around the middle of the day.
+        final lunchIndex =
+        (((dayPlaces.length + 1) ~/ 2) - 1).clamp(0, dayPlaces.length - 1);
+        final lunchPlace = dayPlaces[lunchIndex];
+        planned.add(
+          _MealSlot(
+            day: cluster.dayNumber,
+            meal: MealType.lunch,
+            nearName: lunchPlace.name,
+            latitude: lunchPlace.latitude,
+            longitude: lunchPlace.longitude,
+            time: _mealTime(
+              trip.startDate,
+              cluster.dayNumber,
+              MealType.lunch,
+            ),
+          ),
+        );
+
+        // Dinner: near the last stop of the day.
+        final dinnerPlace = dayPlaces.last;
+        planned.add(
+          _MealSlot(
+            day: cluster.dayNumber,
+            meal: MealType.dinner,
+            nearName: dinnerPlace.name,
+            latitude: dinnerPlace.latitude,
+            longitude: dinnerPlace.longitude,
+            time: _mealTime(
+              trip.startDate,
+              cluster.dayNumber,
+              MealType.dinner,
+            ),
+          ),
+        );
+      }
+
+      // ---- fetch options for all slots (in parallel) ----
+      var failed = 0;
+
+      await Future.wait(
+        planned.map((slot) async {
+          try {
+            slot.options =
+            await _restaurantService.recommendRestaurantsForMeal(
+              latitude: slot.latitude,
+              longitude: slot.longitude,
+              meal: slot.meal,
+              mealTime: slot.time,
+              nearPlaceName: slot.nearName,
+              maxBudgetPerMealPerPerson: budgetPerMeal,
+              limit: limit,
+            );
+          } catch (_) {
+            failed++;
+          }
+        }),
+      );
+
+      if (planned.isNotEmpty && failed == planned.length) {
+        throw Exception(
+          'Restaurant search failed. Check your connection and Places API key.',
+        );
+      }
+
+      // ---- restore / pre-select ----
+      final carry = _slots.isEmpty ? null : _choicesFromState();
+      final saved = RestaurantPlan.fromTrip(tripData);
+      final firstVisit = tripData['restaurantSelected'] == null;
+      final selection = <String, String>{};
+      final used = <String>{};
+
+      for (final slot in planned) {
+        Map<String, dynamic>? preferred = carry?[slot.key];
+
+        if (preferred == null && carry == null) {
+          final plan = RestaurantPlan.find(
+            saved,
+            slot.day,
+            slot.meal,
+          );
+          preferred = plan?.restaurant;
+        }
+
+        if (preferred != null && PlaceMap.id(preferred).isNotEmpty) {
+          final id = PlaceMap.id(preferred);
+          if (!slot.options.any((r) => PlaceMap.id(r) == id)) {
+            slot.options.insert(0, preferred);
+          }
+          selection[slot.key] = id;
+          used.add(id);
+        } else if (firstVisit && carry == null) {
+          for (final r in slot.options) {
+            final id = PlaceMap.id(r);
+            if (!used.contains(id)) {
+              selection[slot.key] = id;
+              used.add(id);
+              break;
+            }
+          }
+        }
+      }
 
       if (!mounted) return;
 
       setState(() {
-        _restaurants = restaurants;
+        _slots = planned;
+        _restaurants = [
+          for (final slot in planned) ...slot.options,
+        ];
+        _selectedBySlot
+          ..clear()
+          ..addAll(selection);
         _loading = false;
       });
     } catch (e) {
@@ -86,24 +303,43 @@ class _RestaurantSelectionScreenState
     });
 
     try {
+      final plans = <RestaurantPlan>[];
+      Map<String, dynamic>? legacy;
+
+      for (final slot in _slots) {
+        final id = _selectedBySlot[slot.key];
+        if (id == null) continue;
+
+        Map<String, dynamic>? restaurant;
+        for (final candidate in slot.options) {
+          if (PlaceMap.id(candidate) == id) {
+            restaurant = candidate;
+            break;
+          }
+        }
+        if (restaurant == null) continue;
+
+        plans.add(
+          RestaurantPlan(
+            dayNumber: slot.day,
+            mealType: slot.meal,
+            restaurant: restaurant,
+          ),
+        );
+
+        if (legacy == null || slot.meal == MealType.lunch) {
+          legacy ??= restaurant;
+        }
+      }
+
       final data = <String, dynamic>{
-        'restaurantSelected':
-        _selectedRestaurantId != null,
+        'restaurantSelected': plans.isNotEmpty,
+        'restaurantPlans': plans.map((p) => p.toJson()).toList(),
+        // Legacy field kept in sync so older screens keep working.
+        'selectedRestaurant': legacy ?? FieldValue.delete(),
         'updatedAt':
         DateTime.now().toIso8601String(),
       };
-
-      if (_selectedRestaurantId != null) {
-        final selectedRestaurant =
-        _restaurants.firstWhere(
-              (restaurant) =>
-          restaurant['id']?.toString() ==
-              _selectedRestaurantId,
-        );
-
-        data['selectedRestaurant'] =
-            selectedRestaurant;
-      }
 
       await _tripService.updateTrip(
         widget.tripId,
@@ -223,17 +459,164 @@ class _RestaurantSelectionScreenState
     }
   }
 
-  void _selectRestaurant(String restaurantId) {
+  void _selectRestaurant(String slotKey, String restaurantId) {
     setState(() {
-      if (_selectedRestaurantId ==
-          restaurantId) {
-        _selectedRestaurantId = null;
+      if (_selectedBySlot[slotKey] == restaurantId) {
+        _selectedBySlot.remove(slotKey);
       } else {
-        _selectedRestaurantId =
-            restaurantId;
+        _selectedBySlot[slotKey] = restaurantId;
       }
     });
   }
+
+  Future<void> _searchManually(_MealSlot slot) async {
+    final controller = TextEditingController();
+    var results = <Map<String, dynamic>>[];
+    var searching = false;
+    String? error;
+
+    final picked = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheet) {
+            Future<void> run() async {
+              final query = controller.text.trim();
+              if (query.isEmpty) return;
+              setSheet(() {
+                searching = true;
+                error = null;
+              });
+              try {
+                final found =
+                await _restaurantService.searchRestaurantsByText(
+                  query: query,
+                  latitude: slot.latitude,
+                  longitude: slot.longitude,
+                  nearPlaceName: slot.nearName,
+                );
+                setSheet(() {
+                  results = found;
+                  searching = false;
+                });
+              } catch (e) {
+                setSheet(() {
+                  error = 'Search failed: $e';
+                  searching = false;
+                });
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                20,
+                20,
+                MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Find a ${slot.meal.label.toLowerCase()} spot near ${slot.nearName}',
+                    style: const TextStyle(
+                      color: Color(0xFF102A43),
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => run(),
+                    decoration: InputDecoration(
+                      hintText: 'Restaurant or cuisine name',
+                      filled: true,
+                      fillColor: const Color(0xFFF2F7FB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.search_rounded),
+                        onPressed: run,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (searching)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFFF8A65),
+                        ),
+                      ),
+                    ),
+                  if (error != null)
+                    Text(
+                      error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final r in results)
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              Icons.restaurant_menu_rounded,
+                              color: Color(0xFFFF8A65),
+                            ),
+                            title: Text(
+                              _getName(r),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              _getAddress(r),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => Navigator.pop(sheetContext, r),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (picked == null || !mounted) return;
+
+    final id = PlaceMap.id(picked);
+    if (id.isEmpty) return;
+
+    setState(() {
+      slot.options.removeWhere((r) => PlaceMap.id(r) == id);
+      slot.options.insert(0, picked);
+      _restaurants = [
+        for (final s in _slots) ...s.options,
+      ];
+      _selectedBySlot[slot.key] = id;
+    });
+  }
+
+  String _dayTitle(int day) => 'Day $day';
 
   void _showMessage(String message) {
     if (!mounted) return;
@@ -253,18 +636,18 @@ class _RestaurantSelectionScreenState
 
   @override
   Widget build(BuildContext context) {
-    final selectedRestaurant =
-    _selectedRestaurantId == null
-        ? null
-        : _restaurants
-        .cast<Map<String, dynamic>?>()
-        .firstWhere(
-          (restaurant) =>
-      restaurant?['id']
-          ?.toString() ==
-          _selectedRestaurantId,
-      orElse: () => null,
-    );
+    Map<String, dynamic>? selectedRestaurant;
+    for (final slot in _slots) {
+      final id = _selectedBySlot[slot.key];
+      if (id == null) continue;
+      for (final r in slot.options) {
+        if (PlaceMap.id(r) == id) {
+          selectedRestaurant = r;
+          break;
+        }
+      }
+      if (selectedRestaurant != null) break;
+    }
 
     return Scaffold(
       backgroundColor:
@@ -299,10 +682,21 @@ class _RestaurantSelectionScreenState
               ),
               children: [
                 _buildHeader(),
+                const SizedBox(height: 14),
+                _buildBreakfastToggle(),
                 const SizedBox(height: 18),
-                ..._restaurants.map(
-                  _buildRestaurantCard,
-                ),
+                for (var i = 0; i < _slots.length; i++) ...[
+                  if (i == 0 || _slots[i].day != _slots[i - 1].day)
+                    _buildDayTitle(_slots[i].day),
+                  _buildSlotHeader(_slots[i]),
+                  if (_slots[i].options.isEmpty)
+                    _buildNoOptions()
+                  else
+                    ..._slots[i].options.map(
+                          (r) => _buildRestaurantCard(r, _slots[i]),
+                    ),
+                  const SizedBox(height: 6),
+                ],
               ],
             ),
           ),
@@ -443,12 +837,19 @@ class _RestaurantSelectionScreenState
 
   Widget _buildRestaurantCard(
       Map<String, dynamic> restaurant,
+      _MealSlot slot,
       ) {
     final id =
         restaurant['id']?.toString() ?? '';
 
     final selected =
-        _selectedRestaurantId == id;
+        _selectedBySlot[slot.key] == id;
+
+    final distanceKm =
+    (restaurant['distanceKm'] as num?)?.toDouble();
+    final perPerson =
+    PlaceMap.estimatedMealPerPerson(restaurant);
+    final openState = restaurant['openAtMealTime'];
 
     final name =
     _getName(restaurant);
@@ -494,7 +895,7 @@ class _RestaurantSelectionScreenState
         borderRadius:
         BorderRadius.circular(22),
         onTap: () =>
-            _selectRestaurant(id),
+            _selectRestaurant(slot.key, id),
         child: Padding(
           padding:
           const EdgeInsets.all(16),
@@ -697,6 +1098,34 @@ class _RestaurantSelectionScreenState
                   ],
                 ),
               ],
+              if (distanceKm != null) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.directions_walk_rounded,
+                      color: Color(0xFFFF8A65),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        '${distanceKm.toStringAsFixed(1)} km from ${slot.nearName}'
+                        '${openState == true ? ' \u00B7 Open at ${slot.meal.label.toLowerCase()} time' : ''}',
+                        maxLines: 2,
+                        overflow:
+                        TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF536B7A),
+                          fontSize: 13,
+                          fontWeight:
+                          FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -718,7 +1147,7 @@ class _RestaurantSelectionScreenState
                       ),
                     ),
                     child: Text(
-                      price,
+                      '$price \u00B7 \u2248 \u20B9${perPerson.round()}/person',
                       style:
                       const TextStyle(
                         color:
@@ -754,12 +1183,159 @@ class _RestaurantSelectionScreenState
     );
   }
 
+  Widget _buildBreakfastToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE6EDF3),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.free_breakfast_rounded,
+            color: Color(0xFFFF8A65),
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Plan breakfast too',
+                  style: TextStyle(
+                    color: Color(0xFF102A43),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Lunch and dinner are suggested by default',
+                  style: TextStyle(
+                    color: Color(0xFF78909C),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _includeBreakfast,
+            activeColor: const Color(0xFFFF8A65),
+            onChanged: _loading
+                ? null
+                : (value) {
+              setState(() {
+                _includeBreakfast = value;
+                _loading = true;
+              });
+              _loadRestaurants();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDayTitle(int day) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 10),
+      child: Text(
+        _dayTitle(day),
+        style: const TextStyle(
+          color: Color(0xFF102A43),
+          fontSize: 19,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSlotHeader(_MealSlot slot) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 7,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEDE6),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              slot.meal.label,
+              style: const TextStyle(
+                color: Color(0xFFE76F00),
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Near ${slot.nearName}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF536B7A),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => _searchManually(slot),
+            icon: const Icon(Icons.search_rounded, size: 18),
+            label: const Text('Search'),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFFF8A65),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoOptions() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE6EDF3),
+        ),
+      ),
+      child: Text(
+        'No open restaurants found nearby. Use Search or skip this meal.',
+        style: TextStyle(
+          color: Colors.grey.shade600,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomBar(
       Map<String, dynamic>?
       selectedRestaurant,
       ) {
     final hasSelection =
-        _selectedRestaurantId != null;
+        _selectedBySlot.isNotEmpty;
 
     return SafeArea(
       child: Container(
@@ -807,7 +1383,7 @@ class _RestaurantSelectionScreenState
                 Expanded(
                   child: Text(
                     hasSelection
-                        ? 'Restaurant selected for your trip'
+                        ? '${_selectedBySlot.length} meal(s) planned across ${_slots.map((s) => s.day).toSet().length} day(s)'
                         : 'Restaurant selection is optional',
                     style: TextStyle(
                       color: hasSelection
@@ -1008,4 +1584,26 @@ class _RestaurantSelectionScreenState
       ),
     );
   }
+}
+
+class _MealSlot {
+  final int day;
+  final MealType meal;
+  final String nearName;
+  final double latitude;
+  final double longitude;
+  final DateTime time;
+  List<Map<String, dynamic>> options;
+
+  _MealSlot({
+    required this.day,
+    required this.meal,
+    required this.nearName,
+    required this.latitude,
+    required this.longitude,
+    required this.time,
+    List<Map<String, dynamic>>? options,
+  }) : options = options ?? <Map<String, dynamic>>[];
+
+  String get key => '${day}_${meal.name}';
 }

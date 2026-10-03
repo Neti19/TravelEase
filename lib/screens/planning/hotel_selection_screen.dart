@@ -1,6 +1,10 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
+import '../../models/hotel.dart';
+import '../../models/place_map_reader.dart';
+import '../../services/day_planner.dart';
 import '../../services/hotel_service.dart';
 import '../../services/trip_destination_service.dart';
 import '../../services/trip_service.dart';
@@ -27,9 +31,17 @@ class _HotelSelectionScreenState
 
   final TripService _tripService = TripService();
 
+  // Flattened list of every recommended hotel (used for the empty check).
   List<Map<String, dynamic>> _hotels = [];
 
-  String? _selectedHotelId;
+  // One entry per stay area (consecutive days that share a hotel).
+  List<_StayOption> _stays = [];
+
+  // stay index -> selected hotel id
+  final Map<int, String> _selectedByStay = {};
+
+  // When true every day gets its own stay/hotel list.
+  bool _separateHotels = false;
 
   bool _loading = true;
   bool _saving = false;
@@ -40,28 +52,157 @@ class _HotelSelectionScreenState
     _loadHotels();
   }
 
+  /// Hotel budget share used to rank hotels (35% of the trip budget,
+  /// spread over the nights). Only a ranking hint, never a hard filter.
+  static const double _hotelBudgetShare = 0.35;
+
+  Map<int, Map<String, dynamic>> _dayChoicesFromState() {
+    final choices = <int, Map<String, dynamic>>{};
+    for (var i = 0; i < _stays.length; i++) {
+      final id = _selectedByStay[i];
+      if (id == null) continue;
+      for (final hotel in _stays[i].hotels) {
+        if (PlaceMap.id(hotel) == id) {
+          for (final day in _stays[i].stay.dayNumbers) {
+            choices[day] = hotel;
+          }
+          break;
+        }
+      }
+    }
+    return choices;
+  }
+
   Future<void> _loadHotels() async {
     try {
+      final trip = await _tripService.getTrip(widget.tripId);
+
+      if (trip == null) {
+        throw Exception('Trip not found.');
+      }
+
+      final rawSnapshot = await FirebaseFirestore.instance
+          .collection('trips')
+          .doc(widget.tripId)
+          .get();
+
+      final tripData = rawSnapshot.data() ?? <String, dynamic>{};
+
       final selectedPlaces =
       await _destinationService.getSelectedPlaces(
         widget.tripId,
       );
 
-      if (selectedPlaces.isEmpty) {
+      final places = <PlannerPlace>[];
+
+      for (final map in selectedPlaces) {
+        final place = PlannerPlace.fromMap(map);
+        if (place != null) places.add(place);
+      }
+
+      if (places.isEmpty) {
         throw Exception(
           'No tourist places selected.',
         );
       }
 
-      final hotels =
-      await _hotelService.getHotelsNearPlaces(
-        selectedPlaces: selectedPlaces,
+      final days = trip.numberOfDays < 1 ? 1 : trip.numberOfDays;
+
+      final clusters = DayPlanner.clusterIntoDays(
+        places: places,
+        numberOfDays: days,
+        startLatitude: trip.startLatitude,
+        startLongitude: trip.startLongitude,
       );
+
+      final groups = DayPlanner.buildStayGroups(
+        clusters,
+        // A negative threshold never merges: one stay per day.
+        mergeThresholdKm: _separateHotels ? -1 : 25,
+      );
+
+      final nights = days > 1 ? days - 1 : 1;
+      final budgetPerNight = trip.budget > 0
+          ? trip.budget * _hotelBudgetShare / nights
+          : 0.0;
+
+      // Choices the user already made (this session) or saved earlier.
+      final carry =
+      _stays.isEmpty ? null : _dayChoicesFromState();
+      final saved = HotelPlan.fromTrip(
+        tripData,
+        numberOfDays: days,
+      );
+      final firstVisit = tripData['hotelSelected'] == null;
+
+      final stays = <_StayOption>[];
+      var failedStays = 0;
+
+      for (final group in groups) {
+        var hotels = <Map<String, dynamic>>[];
+
+        try {
+          hotels = await _hotelService.recommendHotelsForStay(
+            stay: group,
+            maxBudgetPerNight: budgetPerNight,
+            travelers: trip.travelersCount < 1
+                ? 1
+                : trip.travelersCount,
+          );
+        } catch (_) {
+          failedStays++;
+        }
+
+        stays.add(_StayOption(stay: group, hotels: hotels));
+      }
+
+      if (failedStays == stays.length) {
+        throw Exception(
+          'Hotel search failed. Check your connection and Places API key.',
+        );
+      }
+
+      final selection = <int, String>{};
+
+      for (var i = 0; i < stays.length; i++) {
+        final firstDay = stays[i].stay.firstDay;
+
+        Map<String, dynamic>? preferred = carry?[firstDay];
+
+        if (preferred == null && saved.isNotEmpty) {
+          preferred = HotelPlan.forDay(saved, firstDay)?.hotel;
+        }
+
+        if (preferred != null && PlaceMap.id(preferred).isNotEmpty) {
+          final id = PlaceMap.id(preferred);
+          final exists = stays[i].hotels.any(
+                (h) => PlaceMap.id(h) == id,
+          );
+          if (!exists) {
+            // Keep an earlier choice visible even if it is no longer
+            // among the fresh recommendations.
+            stays[i].hotels.insert(0, preferred);
+          }
+          selection[i] = id;
+        } else if (firstVisit &&
+            carry == null &&
+            stays[i].hotels.isNotEmpty) {
+          // First visit: pre-select the best match. The user can
+          // change or deselect it.
+          selection[i] = PlaceMap.id(stays[i].hotels.first);
+        }
+      }
 
       if (!mounted) return;
 
       setState(() {
-        _hotels = hotels;
+        _stays = stays;
+        _hotels = [
+          for (final option in stays) ...option.hotels,
+        ];
+        _selectedByStay
+          ..clear()
+          ..addAll(selection);
         _loading = false;
       });
     } catch (e) {
@@ -85,20 +226,40 @@ class _HotelSelectionScreenState
     });
 
     try {
+      // One HotelPlan per day. A hotel chosen for a multi-day stay is
+      // written for every day of that stay.
+      final plans = <HotelPlan>[];
+      Map<String, dynamic>? firstHotel;
+
+      for (var i = 0; i < _stays.length; i++) {
+        final id = _selectedByStay[i];
+        if (id == null) continue;
+
+        Map<String, dynamic>? hotel;
+        for (final candidate in _stays[i].hotels) {
+          if (PlaceMap.id(candidate) == id) {
+            hotel = candidate;
+            break;
+          }
+        }
+        if (hotel == null) continue;
+
+        firstHotel ??= hotel;
+
+        for (final day in _stays[i].stay.dayNumbers) {
+          plans.add(HotelPlan(dayNumber: day, hotel: hotel));
+        }
+      }
+
+      plans.sort((a, b) => a.dayNumber.compareTo(b.dayNumber));
+
       final data = <String, dynamic>{
-        'hotelSelected': _selectedHotelId != null,
+        'hotelSelected': plans.isNotEmpty,
+        'hotelPlans': plans.map((p) => p.toJson()).toList(),
+        // Legacy field kept in sync so older screens keep working.
+        'selectedHotel': firstHotel ?? FieldValue.delete(),
         'updatedAt': DateTime.now().toIso8601String(),
       };
-
-      if (_selectedHotelId != null) {
-        final selectedHotel = _hotels.firstWhere(
-              (hotel) =>
-          hotel['id']?.toString() ==
-              _selectedHotelId,
-        );
-
-        data['selectedHotel'] = selectedHotel;
-      }
 
       await _tripService.updateTrip(
         widget.tripId,
@@ -220,14 +381,34 @@ class _HotelSelectionScreenState
     }
   }
 
-  void _selectHotel(String hotelId) {
+  void _selectHotel(int stayIndex, String hotelId) {
     setState(() {
-      if (_selectedHotelId == hotelId) {
-        _selectedHotelId = null;
+      if (_selectedByStay[stayIndex] == hotelId) {
+        _selectedByStay.remove(stayIndex);
       } else {
-        _selectedHotelId = hotelId;
+        _selectedByStay[stayIndex] = hotelId;
       }
     });
+  }
+
+  String _dayLabel(StayGroup stay) {
+    if (stay.dayNumbers.length == 1) {
+      return 'Day ${stay.firstDay}';
+    }
+    return 'Days ${stay.firstDay}\u2013${stay.lastDay}';
+  }
+
+  String _nightsLabel(StayGroup stay) {
+    final n = stay.dayNumbers.length;
+    return n == 1 ? '1 day' : '$n days';
+  }
+
+  String _placesLabel(StayGroup stay) {
+    final names = stay.places.map((p) => p.name).toList();
+    if (names.isEmpty) return 'Around your trip area';
+    final shown = names.take(3).join(', ');
+    final extra = names.length - 3;
+    return extra > 0 ? '$shown +$extra more' : shown;
   }
 
   void _showMessage(String message) {
@@ -247,14 +428,17 @@ class _HotelSelectionScreenState
 
   @override
   Widget build(BuildContext context) {
-    final selectedHotel = _selectedHotelId == null
-        ? null
-        : _hotels.cast<Map<String, dynamic>?>().firstWhere(
-          (hotel) =>
-      hotel?['id']?.toString() ==
-          _selectedHotelId,
-      orElse: () => null,
-    );
+    Map<String, dynamic>? selectedHotel;
+    for (var i = 0; i < _stays.length && selectedHotel == null; i++) {
+      final id = _selectedByStay[i];
+      if (id == null) continue;
+      for (final hotel in _stays[i].hotels) {
+        if (PlaceMap.id(hotel) == id) {
+          selectedHotel = hotel;
+          break;
+        }
+      }
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7FAFC),
@@ -287,10 +471,19 @@ class _HotelSelectionScreenState
               ),
               children: [
                 _buildHeader(),
+                const SizedBox(height: 14),
+                _buildSplitToggle(),
                 const SizedBox(height: 18),
-                ..._hotels.map(
-                  _buildHotelCard,
-                ),
+                for (var i = 0; i < _stays.length; i++) ...[
+                  _buildStayHeader(_stays[i]),
+                  if (_stays[i].hotels.isEmpty)
+                    _buildNoHotelsForStay()
+                  else
+                    ..._stays[i].hotels.map(
+                          (hotel) => _buildHotelCard(hotel, i),
+                    ),
+                  const SizedBox(height: 6),
+                ],
               ],
             ),
           ),
@@ -411,7 +604,7 @@ class _HotelSelectionScreenState
                 ),
                 SizedBox(height: 6),
                 Text(
-                  'We found stays close to the places in your itinerary.',
+                  'We grouped your days by area and found stays close to each day\'s places.',
                   style: TextStyle(
                     color: Colors.white,
                     height: 1.4,
@@ -428,11 +621,21 @@ class _HotelSelectionScreenState
 
   Widget _buildHotelCard(
       Map<String, dynamic> hotel,
+      int stayIndex,
       ) {
     final id = hotel['id']?.toString() ?? '';
 
     final selected =
-        _selectedHotelId == id;
+        _selectedByStay[stayIndex] == id;
+
+    final avgKm = (hotel['avgDistanceKm'] as num?)?.toDouble();
+    final maxKm = (hotel['maxDistanceKm'] as num?)?.toDouble();
+    final perNight =
+    PlaceMap.estimatedHotelPerNight(hotel);
+    final recommended =
+        _stays[stayIndex].hotels.isNotEmpty &&
+            PlaceMap.id(_stays[stayIndex].hotels.first) == id &&
+            hotel['recommendationScore'] != null;
 
     final name = _getName(hotel);
     final address = _getAddress(hotel);
@@ -473,7 +676,7 @@ class _HotelSelectionScreenState
       child: InkWell(
         borderRadius:
         BorderRadius.circular(22),
-        onTap: () => _selectHotel(id),
+        onTap: () => _selectHotel(stayIndex, id),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -646,6 +849,35 @@ class _HotelSelectionScreenState
                   ],
                 ),
               ],
+              if (avgKm != null) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.route_rounded,
+                      color: Color(0xFF1677FF),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        maxKm == null
+                            ? '${avgKm.toStringAsFixed(1)} km from your places'
+                            : '${avgKm.toStringAsFixed(1)} km avg \u00B7 ${maxKm.toStringAsFixed(1)} km max from this stay\'s places',
+                        maxLines: 2,
+                        overflow:
+                        TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF536B7A),
+                          fontSize: 13,
+                          fontWeight:
+                          FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -662,7 +894,7 @@ class _HotelSelectionScreenState
                       BorderRadius.circular(10),
                     ),
                     child: Text(
-                      price,
+                      '$price \u00B7 \u2248 \u20B9${perNight.round()}/night',
                       style: const TextStyle(
                         color: Color(0xFFE76F00),
                         fontSize: 12,
@@ -672,6 +904,17 @@ class _HotelSelectionScreenState
                     ),
                   ),
                   const Spacer(),
+                  if (recommended && !selected) ...[
+                    const Text(
+                      'Best match',
+                      style: TextStyle(
+                        color: Color(0xFF2E9E6B),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                   Text(
                     selected
                         ? 'Selected'
@@ -696,11 +939,158 @@ class _HotelSelectionScreenState
     );
   }
 
+  Widget _buildSplitToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE6EDF3),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.swap_horiz_rounded,
+            color: Color(0xFF1677FF),
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Different hotel each day',
+                  style: TextStyle(
+                    color: Color(0xFF102A43),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Off: nearby days share one hotel',
+                  style: TextStyle(
+                    color: Color(0xFF78909C),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _separateHotels,
+            activeColor: const Color(0xFF1677FF),
+            onChanged: _loading
+                ? null
+                : (value) {
+              setState(() {
+                _separateHotels = value;
+                _loading = true;
+              });
+              _loadHotels();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStayHeader(_StayOption option) {
+    final stay = option.stay;
+
+    return Padding(
+      padding: const EdgeInsets.only(
+        bottom: 12,
+        top: 4,
+      ),
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 7,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDFF4FF),
+              borderRadius:
+              BorderRadius.circular(12),
+            ),
+            child: Text(
+              _dayLabel(stay),
+              style: const TextStyle(
+                color: Color(0xFF1677FF),
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Stay near ${_placesLabel(stay)}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF102A43),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_nightsLabel(stay)} \u00B7 same hotel for these days',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoHotelsForStay() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE6EDF3),
+        ),
+      ),
+      child: Text(
+        'No hotels found near this area. You can continue without one.',
+        style: TextStyle(
+          color: Colors.grey.shade600,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomBar(
       Map<String, dynamic>? selectedHotel,
       ) {
     final hasSelection =
-        _selectedHotelId != null;
+        _selectedByStay.isNotEmpty;
 
     return SafeArea(
       child: Container(
@@ -741,7 +1131,7 @@ class _HotelSelectionScreenState
                 Expanded(
                   child: Text(
                     hasSelection
-                        ? 'Hotel selected for your trip'
+                        ? '${_selectedByStay.length} of ${_stays.length} stay area(s) have a hotel'
                         : 'Hotel selection is optional',
                     style: TextStyle(
                       color: hasSelection
@@ -914,4 +1304,14 @@ class _HotelSelectionScreenState
       ),
     );
   }
+}
+
+class _StayOption {
+  final StayGroup stay;
+  final List<Map<String, dynamic>> hotels;
+
+  _StayOption({
+    required this.stay,
+    required this.hotels,
+  });
 }

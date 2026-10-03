@@ -1,6 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
+import '../models/hotel.dart';
 import '../models/itinerary.dart';
+import '../models/place_map_reader.dart';
+import '../models/restaurant.dart';
+import '../services/day_planner.dart';
 import '../services/route_service.dart';
 
 class ItineraryGeneratorService {
@@ -9,6 +14,9 @@ class ItineraryGeneratorService {
 
   final RouteService _routeService =
       RouteService();
+
+  final Map<String, int> _travelMinutesCache =
+      {};
 
   Future<FullItinerary> generateForTrip(
     String tripId,
@@ -23,286 +31,795 @@ class ItineraryGeneratorService {
       throw Exception('Trip not found.');
     }
 
-    final trip =
+    final tripData =
         tripSnapshot.data()!;
 
     final startDate =
-        _readDate(trip['startDate']);
+        _readDate(tripData['startDate']);
 
     final numberOfDays =
-        (trip['numberOfDays'] as num?)?.toInt() ?? 1;
+        (tripData['numberOfDays'] as num?)?.toInt() ?? 1;
+
+    final travelers =
+        (tripData['travelersCount'] as num?)?.toInt() ?? 1;
 
     if (numberOfDays <= 0) {
-      throw Exception('Invalid number of trip days.');
-    }
-
-    final routeData =
-        trip['route'];
-
-    if (routeData is! Map) {
       throw Exception(
-        'Route is not generated yet. Please generate the main route first.',
+        'Invalid number of trip days.',
       );
     }
 
-    final orderedStopsRaw =
-        routeData['orderedStops'];
+    final tripStartLatitude =
+        (tripData['startLatitude'] as num?)?.toDouble();
 
-    if (orderedStopsRaw is! List ||
-        orderedStopsRaw.isEmpty) {
+    final tripStartLongitude =
+        (tripData['startLongitude'] as num?)?.toDouble();
+
+    if (tripStartLatitude == null ||
+        tripStartLongitude == null) {
       throw Exception(
-        'No ordered route stops found.',
+        'Starting location coordinates are missing.',
       );
     }
 
-    final routePoints =
-        <RoutePoint>[];
+    /*
+     * ----------------------------------------------------------
+     * SELECTED TOURIST PLACES
+     * ----------------------------------------------------------
+     */
 
-    for (final item in orderedStopsRaw) {
-      if (item is! Map) continue;
+    final selectedPlacesRaw =
+        await _readSelectedPlaces(tripId);
 
-      final latitude =
-          (item['latitude'] as num?)?.toDouble();
+    final places = <PlannerPlace>[];
 
-      final longitude =
-          (item['longitude'] as num?)?.toDouble();
-
-      if (latitude == null ||
-          longitude == null) {
-        continue;
+    for (final map in selectedPlacesRaw) {
+      final place = PlannerPlace.fromMap(map);
+      if (place != null) {
+        places.add(place);
       }
-
-      routePoints.add(
-        RoutePoint(
-          id: item['id']?.toString() ?? '',
-          name: item['name']?.toString() ??
-              'Location',
-          latitude: latitude,
-          longitude: longitude,
-          type: item['type']?.toString() ??
-              'location',
-        ),
-      );
     }
 
-    if (routePoints.length < 2) {
+    if (places.isEmpty) {
       throw Exception(
-        'At least two route locations are required.',
+        'No tourist places selected.',
       );
     }
+
+    /*
+     * ----------------------------------------------------------
+     * CREATE THE SAME DAY CLUSTERS USED BY THE
+     * HOTEL AND RESTAURANT SELECTION SCREENS.
+     * ----------------------------------------------------------
+     */
+
+    final clusters =
+        DayPlanner.clusterIntoDays(
+      places: places,
+      numberOfDays: numberOfDays,
+      startLatitude: tripStartLatitude,
+      startLongitude: tripStartLongitude,
+    );
+
+    /*
+     * ----------------------------------------------------------
+     * SELECTED HOTEL PLANS
+     *
+     * hotelPlans:
+     * [{dayNumber, hotel: {...}}]
+     *
+     * Older trips using selectedHotel are also supported by
+     * HotelPlan.fromTrip().
+     * ----------------------------------------------------------
+     */
+
+    final hotelPlans =
+        HotelPlan.fromTrip(
+      tripData,
+      numberOfDays: numberOfDays,
+    );
+
+    /*
+     * ----------------------------------------------------------
+     * SELECTED RESTAURANT PLANS
+     *
+     * restaurantPlans:
+     * [{dayNumber, mealType, restaurant: {...}}]
+     *
+     * Older trips using selectedRestaurant become Day 1 lunch.
+     * ----------------------------------------------------------
+     */
+
+    final restaurantPlans =
+        RestaurantPlan.fromTrip(tripData);
 
     final days =
         <DayItinerary>[];
 
-    int stopIndex = 1;
+    RoutePoint previousDayEnd =
+        RoutePoint(
+      id: 'start',
+      name:
+          tripData['startLocation']?.toString() ??
+              'Starting Location',
+      latitude: tripStartLatitude,
+      longitude: tripStartLongitude,
+      type: 'start',
+    );
 
-    RoutePoint previousPoint =
-        routePoints.first;
+    Map<String, dynamic>? previousHotel;
 
-    for (int day = 1;
-        day <= numberOfDays;
-        day++) {
+    for (int dayNumber = 1;
+        dayNumber <= numberOfDays;
+        dayNumber++) {
       final date =
           DateTime(
         startDate.year,
         startDate.month,
         startDate.day,
       ).add(
-        Duration(days: day - 1),
+        Duration(days: dayNumber - 1),
       );
+
+      final cluster = clusters.firstWhere(
+        (item) => item.dayNumber == dayNumber,
+        orElse: () => DayCluster(
+          dayNumber: dayNumber,
+          places: const [],
+          centerLatitude: tripStartLatitude,
+          centerLongitude: tripStartLongitude,
+        ),
+      );
+
+      final dayPlaces =
+          List<PlannerPlace>.from(cluster.places);
+
+      final hotelPlan =
+          HotelPlan.forDay(
+        hotelPlans,
+        dayNumber,
+      );
+
+      final currentHotel =
+          hotelPlan?.hotel;
+
+      final nextHotel =
+          dayNumber < numberOfDays
+              ? HotelPlan.forDay(
+                  hotelPlans,
+                  dayNumber + 1,
+                )?.hotel
+              : null;
+
+      final currentHotelKey =
+          _placeKey(currentHotel);
+
+      final previousHotelKey =
+          _placeKey(previousHotel);
+
+      final nextHotelKey =
+          _placeKey(nextHotel);
+
+      final hotelChangesToday =
+          currentHotel != null &&
+          currentHotelKey != previousHotelKey;
+
+      /*
+       * A checkout is needed when the traveller leaves this hotel
+       * after today, or when today is the final trip day.
+       */
+      final checkoutToday =
+          currentHotel != null &&
+          (dayNumber == numberOfDays ||
+              nextHotelKey != currentHotelKey);
+
+      final restaurantPlansToday =
+          restaurantPlans
+              .where(
+                (plan) =>
+                    plan.dayNumber == dayNumber,
+              )
+              .toList()
+            ..sort(
+              (a, b) =>
+                  _mealStart(
+                date,
+                a.mealType,
+              ).compareTo(
+                _mealStart(
+                  date,
+                  b.mealType,
+                ),
+              ),
+            );
 
       final activities =
           <ItineraryActivity>[];
 
+      var sequence = 1;
+
+      var currentPoint =
+          previousDayEnd;
+
+      /*
+       * Start the day early, but do not force a fixed lunch or
+       * dinner clock time. The planner uses practical meal windows
+       * and places the selected restaurant at the most natural point
+       * in the route.
+       */
       DateTime currentTime =
           DateTime(
         date.year,
         date.month,
         date.day,
-        9,
-        0,
+        7,
+        30,
       );
 
-      final dayEnd =
+      /*
+       * --------------------------------------------------------
+       * BREAKFAST
+       * --------------------------------------------------------
+       */
+
+      final breakfastPlan =
+          _findRestaurantPlan(
+        restaurantPlansToday,
+        MealType.breakfast,
+      );
+
+      if (breakfastPlan != null) {
+        final breakfastPoint =
+            _restaurantPoint(
+          breakfastPlan.restaurant,
+          fallbackId: 'breakfast_$dayNumber',
+        );
+
+        if (breakfastPoint != null) {
+          final mealStart =
+              DateTime(
+            date.year,
+            date.month,
+            date.day,
+            8,
+            30,
+          );
+
+          final mealEnd =
+              mealStart.add(
+            const Duration(
+              minutes: 45,
+            ),
+          );
+
+          currentTime =
+              await _travelAndAddAnchor(
+            activities: activities,
+            sequence: sequence,
+            tripId: tripId,
+            from: currentPoint,
+            to: breakfastPoint,
+            currentTime: currentTime,
+            targetStart: mealStart,
+            anchorEnd: mealEnd,
+            anchorTitle:
+                'Breakfast: ${PlaceMap.name(breakfastPlan.restaurant)}',
+            anchorDescription:
+                _mealDescription(
+              breakfastPlan.restaurant,
+              'Breakfast',
+            ),
+            anchorType:
+                ActivityType.restaurant,
+            mealType: 'breakfast',
+            cost:
+                PlaceMap.estimatedMealPerPerson(
+                      breakfastPlan.restaurant,
+                    ) *
+                    travelers,
+          );
+
+          sequence =
+              activities.length + 1;
+
+          currentPoint =
+              breakfastPoint;
+        }
+      }
+
+      /*
+       * --------------------------------------------------------
+       * MORNING SIGHTSEEING
+       *
+       * We reserve time required to reach the next fixed event:
+       * checkout or lunch.
+       * --------------------------------------------------------
+       */
+
+      if (dayPlaces.isNotEmpty) {
+        final lunchExists =
+            _findRestaurantPlan(
+              restaurantPlansToday,
+              MealType.lunch,
+            ) !=
+            null;
+
+        final morningDeadline =
+            checkoutToday
+                ? DateTime(
+                    date.year,
+                    date.month,
+                    date.day,
+                    10,
+                    45,
+                  )
+                : lunchExists
+                    ? DateTime(
+                        date.year,
+                        date.month,
+                        date.day,
+                        15,
+                        0,
+                      )
+                    : DateTime(
+                        date.year,
+                        date.month,
+                        date.day,
+                        14,
+                        0,
+                      );
+
+        await _addPlacesUntil(
+          places: dayPlaces,
+          dayNumber: dayNumber,
+          tripId: tripId,
+          activities: activities,
+          sequenceStart: sequence,
+          currentPoint: currentPoint,
+          currentTime: currentTime,
+          deadline: morningDeadline,
+          reservedEndTravelPoint:
+              checkoutToday && currentHotel != null
+                  ? _hotelPoint(
+                      currentHotel,
+                      fallbackId:
+                          'hotel_checkout_$dayNumber',
+                    )
+                  : _restaurantPoint(
+                      _findRestaurantPlan(
+                        restaurantPlansToday,
+                        MealType.lunch,
+                      )?.restaurant,
+                      fallbackId:
+                          'lunch_$dayNumber',
+                    ),
+        ).then((result) {
+          currentPoint = result.point;
+          currentTime = result.time;
+          sequence = result.sequence;
+        });
+      }
+
+      /*
+       * --------------------------------------------------------
+       * HOTEL CHECK-OUT
+       * --------------------------------------------------------
+       *
+       * Default planner time: 11:00 AM.
+       * The current app data model does not store hotel-specific
+       * checkout hours, so this is a planner default.
+       * --------------------------------------------------------
+       */
+
+      if (checkoutToday &&
+          currentHotel != null) {
+        final hotelPoint =
+            _hotelPoint(
+          currentHotel,
+          fallbackId:
+              'hotel_checkout_$dayNumber',
+        );
+
+        if (hotelPoint != null) {
+          final checkoutStart =
+              DateTime(
+            date.year,
+            date.month,
+            date.day,
+            11,
+            0,
+          );
+
+          final checkoutEnd =
+              checkoutStart.add(
+            const Duration(
+              minutes: 15,
+            ),
+          );
+
+          currentTime =
+              await _travelAndAddAnchor(
+            activities: activities,
+            sequence: sequence,
+            tripId: tripId,
+            from: currentPoint,
+            to: hotelPoint,
+            currentTime: currentTime,
+            targetStart: checkoutStart,
+            anchorEnd: checkoutEnd,
+            anchorTitle:
+                'Hotel Check-out: ${PlaceMap.name(currentHotel)}',
+            anchorDescription:
+                'Check-out from your selected hotel.',
+            anchorType:
+                ActivityType.hotel,
+            mealType: null,
+            cost: 0,
+          );
+
+          sequence =
+              activities.length + 1;
+
+          currentPoint =
+              hotelPoint;
+        }
+      }
+
+      /*
+       * --------------------------------------------------------
+       * LUNCH
+       * --------------------------------------------------------
+       * The selected restaurant stays the same, but the time is
+       * chosen dynamically: not before 12:00 and not forced to 1:00.
+       * --------------------------------------------------------
+       */
+
+      final lunchPlan =
+          _findRestaurantPlan(
+        restaurantPlansToday,
+        MealType.lunch,
+      );
+
+      if (lunchPlan != null) {
+        final lunchPoint =
+            _restaurantPoint(
+          lunchPlan.restaurant,
+          fallbackId: 'lunch_$dayNumber',
+        );
+
+        if (lunchPoint != null) {
+          final mealStart =
+              DateTime(
+            date.year,
+            date.month,
+            date.day,
+            12,
+            0,
+          );
+
+          final mealEnd =
+              mealStart.add(
+            const Duration(
+              minutes: 60,
+            ),
+          );
+
+          currentTime =
+              await _travelAndAddAnchor(
+            activities: activities,
+            sequence: sequence,
+            tripId: tripId,
+            from: currentPoint,
+            to: lunchPoint,
+            currentTime: currentTime,
+            targetStart: mealStart,
+            anchorEnd: mealEnd,
+            anchorTitle:
+                'Lunch: ${PlaceMap.name(lunchPlan.restaurant)}',
+            anchorDescription:
+                _mealDescription(
+              lunchPlan.restaurant,
+              'Lunch',
+            ),
+            anchorType:
+                ActivityType.restaurant,
+            mealType: 'lunch',
+            cost:
+                PlaceMap.estimatedMealPerPerson(
+                      lunchPlan.restaurant,
+                    ) *
+                    travelers,
+          );
+
+          sequence =
+              activities.length + 1;
+
+          currentPoint =
+              lunchPoint;
+        }
+      }
+
+      /*
+       * --------------------------------------------------------
+       * HOTEL CHECK-IN
+       * --------------------------------------------------------
+       *
+       * Default planner time: 2:30 PM.
+       *
+       * If travel from lunch takes longer, check-in is moved to
+       * the earliest practical time after the lunch transfer.
+       * --------------------------------------------------------
+       */
+
+      if (hotelChangesToday &&
+          currentHotel != null) {
+        final hotelPoint =
+            _hotelPoint(
+          currentHotel,
+          fallbackId:
+              'hotel_checkin_$dayNumber',
+        );
+
+        if (hotelPoint != null) {
+          final minimumCheckIn =
+              DateTime(
+            date.year,
+            date.month,
+            date.day,
+            14,
+            30,
+          );
+
+          final checkInEnd =
+              minimumCheckIn.add(
+            const Duration(
+              minutes: 30,
+            ),
+          );
+
+          currentTime =
+              await _travelAndAddAnchor(
+            activities: activities,
+            sequence: sequence,
+            tripId: tripId,
+            from: currentPoint,
+            to: hotelPoint,
+            currentTime: currentTime,
+            targetStart: minimumCheckIn,
+            anchorEnd: checkInEnd,
+            anchorTitle:
+                'Hotel Check-in: ${PlaceMap.name(currentHotel)}',
+            anchorDescription:
+                'Check-in and settle into your selected hotel.',
+            anchorType:
+                ActivityType.hotel,
+            mealType: null,
+            cost:
+                PlaceMap.estimatedHotelPerNight(
+              currentHotel,
+            ),
+          );
+
+          sequence =
+              activities.length + 1;
+
+          currentPoint =
+              hotelPoint;
+        }
+      }
+
+      /*
+       * --------------------------------------------------------
+       * AFTERNOON / EVENING SIGHTSEEING
+       *
+       * Reserve the dinner window so a tourist visit never
+       * overlaps the selected dinner.
+       * --------------------------------------------------------
+       */
+
+      final dinnerPlan =
+          _findRestaurantPlan(
+        restaurantPlansToday,
+        MealType.dinner,
+      );
+
+      final dinnerPoint =
+          dinnerPlan == null
+              ? null
+              : _restaurantPoint(
+                  dinnerPlan.restaurant,
+                  fallbackId:
+                      'dinner_$dayNumber',
+                );
+
+      final dinnerEarliest =
           DateTime(
         date.year,
         date.month,
         date.day,
         18,
-        0,
+        30,
       );
 
-      /*
-       * Hotel check-in is added only on Day 1.
-       */
-      if (day == 1) {
-        final hotel =
-            _readSelectedPlace(
-          trip['selectedHotel'],
-          fallbackType: 'hotel',
+      final dinnerLatest =
+          DateTime(
+        date.year,
+        date.month,
+        date.day,
+        21,
+        30,
+      );
+
+      final afternoonDeadline =
+          dinnerPoint != null
+              ? dinnerLatest
+              : DateTime(
+                  date.year,
+                  date.month,
+                  date.day,
+                  20,
+                  30,
+                );
+
+      final remainingPlaces =
+          dayPlaces
+              .where(
+                (place) => !_hasPlaceActivity(
+                  activities,
+                  place.id,
+                ),
+              )
+              .toList();
+
+      if (remainingPlaces.isNotEmpty) {
+        final result =
+            await _addPlacesUntil(
+          places: remainingPlaces,
+          dayNumber: dayNumber,
+          tripId: tripId,
+          activities: activities,
+          sequenceStart: sequence,
+          currentPoint: currentPoint,
+          currentTime: currentTime,
+          deadline: afternoonDeadline,
+          reservedEndTravelPoint:
+              dinnerPoint ??
+                  (checkoutToday
+                      ? null
+                      : _hotelPoint(
+                          currentHotel,
+                          fallbackId:
+                              'hotel_return_$dayNumber',
+                        )),
         );
 
-        if (hotel != null) {
-          final end =
-              currentTime.add(
-            const Duration(minutes: 45),
-          );
-
-          activities.add(
-            ItineraryActivity(
-              id: 'hotel_checkin_$tripId',
-              title:
-                  'Hotel Check-in: ${hotel['name']}',
-              description:
-                  hotel['address'] ?? '',
-              startTime: currentTime,
-              endTime: end,
-              cost: 0,
-              type: ActivityType.hotel,
-            ),
-          );
-
-          currentTime =
-              end.add(
-            const Duration(minutes: 15),
-          );
-        }
+        currentPoint = result.point;
+        currentTime = result.time;
+        sequence = result.sequence;
       }
 
-      bool addedActivityToday = false;
+      /*
+       * --------------------------------------------------------
+       * DINNER
+       * --------------------------------------------------------
+       * The selected restaurant stays the same, but the time is
+       * chosen dynamically: not before 6:30 PM and not forced to 7:30 PM.
+       * --------------------------------------------------------
+       */
 
-      while (stopIndex < routePoints.length) {
-        final currentPoint =
-            routePoints[stopIndex];
-
-        final travelDuration =
-            await _getTravelDuration(
-          previousPoint,
-          currentPoint,
+      if (dinnerPlan != null &&
+          dinnerPoint != null) {
+        final mealEnd =
+            dinnerEarliest.add(
+          const Duration(
+            minutes: 60,
+          ),
         );
-
-        final arrivalTime =
-            currentTime.add(
-          travelDuration,
-        );
-
-        if (arrivalTime.isAfter(dayEnd)) {
-          break;
-        }
-
-        final visitDuration =
-            _visitDuration(
-          currentPoint.type,
-        );
-
-        final activityEnd =
-            arrivalTime.add(
-          visitDuration,
-        );
-
-        if (activityEnd.isAfter(dayEnd)) {
-          break;
-        }
-
-        final activity =
-            _createActivity(
-          tripId: tripId,
-          point: currentPoint,
-          startTime: arrivalTime,
-          endTime: activityEnd,
-        );
-
-        activities.add(activity);
 
         currentTime =
-            activityEnd.add(
-          const Duration(minutes: 15),
+            await _travelAndAddAnchor(
+          activities: activities,
+          sequence: sequence,
+          tripId: tripId,
+          from: currentPoint,
+          to: dinnerPoint,
+          currentTime: currentTime,
+          targetStart: dinnerEarliest,
+          anchorEnd: mealEnd,
+          anchorTitle:
+              'Dinner: ${PlaceMap.name(dinnerPlan.restaurant)}',
+          anchorDescription:
+              _mealDescription(
+            dinnerPlan.restaurant,
+            'Dinner',
+          ),
+          anchorType:
+              ActivityType.restaurant,
+          mealType: 'dinner',
+          cost:
+              PlaceMap.estimatedMealPerPerson(
+                    dinnerPlan.restaurant,
+                  ) *
+                  travelers,
         );
 
-        previousPoint =
-            currentPoint;
+        sequence =
+            activities.length + 1;
 
-        stopIndex++;
-        addedActivityToday = true;
-
-        /*
-         * Keep a reasonable number of activities
-         * on one day.
-         */
-        if (activities.where(
-              (item) =>
-                  item.type ==
-                  ActivityType.spot,
-            ).length >=
-            3) {
-          break;
-        }
+        currentPoint =
+            dinnerPoint;
       }
 
       /*
-       * Add selected restaurant as lunch.
+       * --------------------------------------------------------
+       * RETURN TO HOTEL
        *
-       * It is added once, on the first day.
+       * If the traveller is staying at a hotel after today,
+       * finish the day by returning there after dinner.
+       * Do not add a return trip after final-day checkout.
+       * --------------------------------------------------------
        */
-      if (day == 1) {
-        final restaurant =
-            _readSelectedPlace(
-          trip['selectedRestaurant'],
-          fallbackType: 'restaurant',
+
+      if (currentHotel != null &&
+          !checkoutToday) {
+        final hotelPoint =
+            _hotelPoint(
+          currentHotel,
+          fallbackId:
+              'hotel_return_$dayNumber',
         );
 
-        if (restaurant != null) {
-          final lunchStart =
-              DateTime(
-            date.year,
-            date.month,
-            date.day,
-            13,
-            0,
-          );
-
-          final lunchEnd =
-              lunchStart.add(
-            const Duration(hours: 1),
-          );
-
-          final alreadyOverlapping =
-              activities.any(
-            (activity) =>
-                activity.overlapsWith(
-              ItineraryActivity(
-                id: 'temporary',
-                title: '',
-                description: '',
-                startTime: lunchStart,
-                endTime: lunchEnd,
-                cost: 0,
-                type: ActivityType.restaurant,
-              ),
+        if (hotelPoint != null) {
+          final returnStart =
+              currentTime.add(
+            const Duration(
+              minutes: 10,
             ),
           );
 
-          if (!alreadyOverlapping) {
-            activities.add(
-              ItineraryActivity(
-                id:
-                    'restaurant_$tripId',
-                title:
-                    'Lunch: ${restaurant['name']}',
-                description:
-                    restaurant['address'] ?? '',
-                startTime:
-                    lunchStart,
-                endTime:
-                    lunchEnd,
-                cost: 0,
-                type:
-                    ActivityType.restaurant,
+          final travelMinutes =
+              await _travelMinutes(
+            currentPoint,
+            hotelPoint,
+          );
+
+          if (travelMinutes > 0) {
+            final returnEnd =
+                returnStart.add(
+              Duration(
+                minutes: travelMinutes,
               ),
             );
+
+            activities.add(
+              _createTransportActivity(
+                tripId: tripId,
+                from: currentPoint,
+                to: hotelPoint,
+                startTime: returnStart,
+                endTime: returnEnd,
+                sequence:
+                    sequence++,
+                description:
+                    'Return to ${PlaceMap.name(currentHotel)} for the night.',
+              ),
+            );
+
+            currentTime =
+                returnEnd;
+            currentPoint =
+                hotelPoint;
           }
         }
       }
+
+      /*
+       * --------------------------------------------------------
+       * IF THE FINAL HOTEL IS ALSO THE LAST DAY, checkout is
+       * already scheduled at 11 AM, so the day does not finish
+       * with a hotel return.
+       * --------------------------------------------------------
+       */
 
       activities.sort(
         (a, b) =>
@@ -311,18 +828,77 @@ class ItineraryGeneratorService {
         ),
       );
 
+      for (var i = 0; i < activities.length; i++) {
+        final old = activities[i];
+
+        activities[i] =
+            old.copyWith(
+          dayNumber: dayNumber,
+          sequence: i + 1,
+        );
+      }
+
       days.add(
         DayItinerary(
-          dayNumber: day,
+          dayNumber: dayNumber,
           date: date,
           activities: activities,
         ),
       );
+
+      previousDayEnd =
+          currentPoint;
+
+      previousHotel =
+          currentHotel;
     }
 
-    if (stopIndex < routePoints.length) {
+    /*
+     * ----------------------------------------------------------
+     * VALIDATION
+     * ----------------------------------------------------------
+     */
+
+    final scheduledPlaceIds =
+        <String>{};
+
+    for (final day in days) {
+      for (final activity in day.activities) {
+        if (activity.type ==
+                ActivityType.spot &&
+            activity.placeId != null &&
+            activity.placeId!.isNotEmpty) {
+          scheduledPlaceIds.add(
+            activity.placeId!,
+          );
+        }
+      }
+    }
+
+    final missingPlaces =
+        places
+            .where(
+              (place) =>
+                  !scheduledPlaceIds.contains(
+                place.id,
+              ),
+            )
+            .toList();
+
+    /*
+     * Do not fail only because a restaurant/hotel consumes time.
+     * Instead, report the exact tourist places that could not be
+     * fitted.
+     */
+    if (missingPlaces.isNotEmpty) {
+      final names =
+          missingPlaces.map(
+        (place) => place.name,
+      );
+
       throw Exception(
-        'Not enough time to visit all selected places in $numberOfDays days.',
+        'Not enough practical time to schedule all selected tourist places. '
+        'These places could not fit: ${names.join(', ')}',
       );
     }
 
@@ -342,16 +918,583 @@ class ItineraryGeneratorService {
         'updatedAt':
             FieldValue.serverTimestamp(),
       },
-      SetOptions(merge: true),
+      SetOptions(
+        merge: true,
+      ),
     );
 
     return itinerary;
   }
 
-  Future<Duration> _getTravelDuration(
+  /*
+   * ============================================================
+   * READ SELECTED PLACES
+   * ============================================================
+   */
+
+  Future<List<Map<String, dynamic>>>
+      _readSelectedPlaces(
+    String tripId,
+  ) async {
+    final snapshot =
+        await _firestore
+            .collection('trips')
+            .doc(tripId)
+            .collection('selectedPlaces')
+            .get();
+
+    return snapshot.docs
+        .map(
+          (doc) => {
+            ...doc.data(),
+            if (!doc.data().containsKey('id'))
+              'id': doc.id,
+          },
+        )
+        .toList();
+  }
+
+  /*
+   * ============================================================
+   * RESTAURANT PLAN HELPERS
+   * ============================================================
+   */
+
+  RestaurantPlan? _findRestaurantPlan(
+    List<RestaurantPlan> plans,
+    MealType meal,
+  ) {
+    for (final plan in plans) {
+      if (plan.mealType == meal) {
+        return plan;
+      }
+    }
+    return null;
+  }
+
+  DateTime _mealStart(
+    DateTime date,
+    MealType meal,
+  ) {
+    switch (meal) {
+      case MealType.breakfast:
+        return DateTime(
+          date.year,
+          date.month,
+          date.day,
+          8,
+          30,
+        );
+
+      case MealType.lunch:
+        return DateTime(
+          date.year,
+          date.month,
+          date.day,
+          12,
+          0,
+        );
+
+      case MealType.dinner:
+        return DateTime(
+          date.year,
+          date.month,
+          date.day,
+          18,
+          30,
+        );
+    }
+  }
+
+  String _mealDescription(
+    Map<String, dynamic> restaurant,
+    String mealName,
+  ) {
+    final address =
+        PlaceMap.address(
+      restaurant,
+    );
+
+    if (address.trim().isEmpty) {
+      return '$mealName at the selected restaurant.';
+    }
+
+    return '$mealName at the selected restaurant. $address';
+  }
+
+  /*
+   * ============================================================
+   * HOTEL HELPERS
+   * ============================================================
+   */
+
+  RoutePoint? _hotelPoint(
+    Map<String, dynamic>? hotel, {
+    required String fallbackId,
+  }) {
+    if (hotel == null) {
+      return null;
+    }
+
+    final latitude =
+        PlaceMap.latitude(hotel);
+
+    final longitude =
+        PlaceMap.longitude(hotel);
+
+    if (latitude == null ||
+        longitude == null) {
+      return null;
+    }
+
+    return RoutePoint(
+      id: PlaceMap.id(hotel).isEmpty
+          ? fallbackId
+          : PlaceMap.id(hotel),
+      name: PlaceMap.name(hotel),
+      latitude: latitude,
+      longitude: longitude,
+      type: 'hotel',
+    );
+  }
+
+  /*
+   * ============================================================
+   * RESTAURANT HELPERS
+   * ============================================================
+   */
+
+  RoutePoint? _restaurantPoint(
+    Map<String, dynamic>? restaurant, {
+    required String fallbackId,
+  }) {
+    if (restaurant == null) {
+      return null;
+    }
+
+    final latitude =
+        PlaceMap.latitude(restaurant);
+
+    final longitude =
+        PlaceMap.longitude(restaurant);
+
+    if (latitude == null ||
+        longitude == null) {
+      return null;
+    }
+
+    return RoutePoint(
+      id: PlaceMap.id(restaurant).isEmpty
+          ? fallbackId
+          : PlaceMap.id(restaurant),
+      name: PlaceMap.name(restaurant),
+      latitude: latitude,
+      longitude: longitude,
+      type: 'restaurant',
+    );
+  }
+
+  /*
+   * ============================================================
+   * SCHEDULING HELPERS
+   * ============================================================
+   */
+
+  Future<_ScheduleResult> _addPlacesUntil({
+    required List<PlannerPlace> places,
+    required int dayNumber,
+    required String tripId,
+    required List<ItineraryActivity> activities,
+    required int sequenceStart,
+    required RoutePoint currentPoint,
+    required DateTime currentTime,
+    required DateTime deadline,
+    required RoutePoint? reservedEndTravelPoint,
+  }) async {
+    var point = currentPoint;
+    var time = currentTime;
+    var sequence = sequenceStart;
+
+    final remaining =
+        List<PlannerPlace>.from(places);
+
+    /*
+     * Choose the next tourist place using the complete local route
+     * cost instead of blindly following the cluster order.
+     * When lunch, dinner, checkout or hotel is the next protected
+     * point, a candidate is preferred when it keeps the route close
+     * to that point. This prevents unnecessary backtracking.
+     */
+    while (remaining.isNotEmpty) {
+      PlannerPlace? bestPlace;
+      int bestScore = 1 << 30;
+      int bestTravelMinutes = 0;
+      DateTime? bestVisitStart;
+      DateTime? bestVisitEnd;
+
+      for (final place in remaining) {
+        final destination =
+            RoutePoint(
+          id: place.id,
+          name: place.name,
+          latitude: place.latitude,
+          longitude: place.longitude,
+          type: 'tourist_spot',
+        );
+
+        final travelMinutes =
+            await _travelMinutes(
+          point,
+          destination,
+        );
+
+        final visitStart =
+            time.add(
+          Duration(
+            minutes: travelMinutes,
+          ),
+        );
+
+        final visitDuration =
+            _visitDuration(
+          place.category,
+        );
+
+        final visitEnd =
+            visitStart.add(
+          visitDuration,
+        );
+
+        var travelToReserved = 0;
+
+        if (reservedEndTravelPoint != null) {
+          travelToReserved =
+              await _travelMinutes(
+            destination,
+            reservedEndTravelPoint,
+          );
+        }
+
+        final safeEnd =
+            visitEnd.add(
+          Duration(
+            minutes: travelToReserved + 10,
+          ),
+        );
+
+        if (safeEnd.isAfter(deadline)) {
+          continue;
+        }
+
+        final routeScore =
+            travelMinutes +
+            travelToReserved;
+
+        if (routeScore < bestScore) {
+          bestScore = routeScore;
+          bestPlace = place;
+          bestTravelMinutes = travelMinutes;
+          bestVisitStart = visitStart;
+          bestVisitEnd = visitEnd;
+        }
+      }
+
+      if (bestPlace == null ||
+          bestVisitStart == null ||
+          bestVisitEnd == null) {
+        break;
+      }
+
+      final destination =
+          RoutePoint(
+        id: bestPlace.id,
+        name: bestPlace.name,
+        latitude: bestPlace.latitude,
+        longitude: bestPlace.longitude,
+        type: 'tourist_spot',
+      );
+
+      if (bestTravelMinutes > 0) {
+        activities.add(
+          _createTransportActivity(
+            tripId: tripId,
+            from: point,
+            to: destination,
+            startTime: time,
+            endTime: bestVisitStart,
+            sequence: sequence++,
+            description:
+                'Travel to ${bestPlace.name}.',
+          ),
+        );
+      }
+
+      activities.add(
+        _createSpotActivity(
+          tripId: tripId,
+          place: bestPlace,
+          startTime: bestVisitStart,
+          endTime: bestVisitEnd,
+          sequence: sequence++,
+          travelMinutes:
+              bestTravelMinutes,
+        ),
+      );
+
+      time =
+          bestVisitEnd.add(
+        const Duration(
+          minutes: 10,
+        ),
+      );
+
+      point = destination;
+      remaining.remove(bestPlace);
+    }
+
+    return _ScheduleResult(
+      point: point,
+      time: time,
+      sequence: sequence,
+    );
+  }
+
+  Future<DateTime> _travelAndAddAnchor({
+    required List<ItineraryActivity> activities,
+    required int sequence,
+    required String tripId,
+    required RoutePoint from,
+    required RoutePoint to,
+    required DateTime currentTime,
+    required DateTime targetStart,
+    required DateTime anchorEnd,
+    required String anchorTitle,
+    required String anchorDescription,
+    required ActivityType anchorType,
+    required String? mealType,
+    required double cost,
+  }) async {
+    final travelMinutes =
+        await _travelMinutes(
+      from,
+      to,
+    );
+
+    final arrival =
+        currentTime.add(
+      Duration(
+        minutes: travelMinutes,
+      ),
+    );
+
+    /*
+     * Meals have a fixed target time.
+     * Hotel check-in may use a later practical time.
+     */
+    final actualStart =
+        targetStart.isAfter(arrival)
+            ? targetStart
+            : arrival;
+
+    if (travelMinutes > 0) {
+      activities.add(
+        _createTransportActivity(
+          tripId: tripId,
+          from: from,
+          to: to,
+          startTime: currentTime,
+          endTime: arrival,
+          sequence: sequence,
+          description:
+              'Travel to ${to.name}.',
+        ),
+      );
+    }
+
+    activities.add(
+      ItineraryActivity(
+        id:
+            '${tripId}_${to.id}_${actualStart.millisecondsSinceEpoch}',
+        title: anchorTitle,
+        description: anchorDescription,
+        startTime: actualStart,
+        endTime:
+            anchorEnd.isAfter(actualStart)
+                ? anchorEnd
+                : actualStart.add(
+                    anchorEnd.difference(
+                      targetStart,
+                    ),
+                  ),
+        cost: cost,
+        type: anchorType,
+        latitude: to.latitude,
+        longitude: to.longitude,
+        placeId: to.id,
+        travelMinutesFromPrevious:
+            travelMinutes,
+        mealType: mealType,
+      ),
+    );
+
+    return activities.last.endTime.add(
+      const Duration(
+        minutes: 10,
+      ),
+    );
+  }
+
+  ItineraryActivity _createTransportActivity({
+    required String tripId,
+    required RoutePoint from,
+    required RoutePoint to,
+    required DateTime startTime,
+    required DateTime endTime,
+    required int sequence,
+    required String description,
+  }) {
+    return ItineraryActivity(
+      id:
+          '${tripId}_travel_${from.id}_${to.id}_${startTime.millisecondsSinceEpoch}',
+      title:
+          'Travel to ${to.name}',
+      description: description,
+      startTime: startTime,
+      endTime: endTime,
+      cost: 0,
+      type: ActivityType.transport,
+      latitude: to.latitude,
+      longitude: to.longitude,
+      dayNumber: null,
+      sequence: sequence,
+      placeId: to.id,
+      travelMinutesFromPrevious:
+          endTime.difference(startTime).inMinutes,
+    );
+  }
+
+  ItineraryActivity _createSpotActivity({
+    required String tripId,
+    required PlannerPlace place,
+    required DateTime startTime,
+    required DateTime endTime,
+    required int sequence,
+    required int travelMinutes,
+  }) {
+    return ItineraryActivity(
+      id:
+          '${tripId}_${place.id}_${startTime.millisecondsSinceEpoch}',
+      title: place.name,
+      description:
+          'Tourist place visit',
+      startTime: startTime,
+      endTime: endTime,
+      cost: 0,
+      type: ActivityType.spot,
+      latitude: place.latitude,
+      longitude: place.longitude,
+      placeId: place.id,
+      travelMinutesFromPrevious:
+          travelMinutes,
+      sequence: sequence,
+    );
+  }
+
+  Duration _visitDuration(
+    String category,
+  ) {
+    final value =
+        category.toLowerCase();
+
+    if (value.contains('museum') ||
+        value.contains('historical')) {
+      return const Duration(
+        minutes: 120,
+      );
+    }
+
+    if (value.contains('park') ||
+        value.contains('beach') ||
+        value.contains('nature')) {
+      return const Duration(
+        minutes: 90,
+      );
+    }
+
+    return const Duration(
+      minutes: 120,
+    );
+  }
+
+  bool _hasPlaceActivity(
+    List<ItineraryActivity> activities,
+    String placeId,
+  ) {
+    return activities.any(
+      (activity) =>
+          activity.type ==
+              ActivityType.spot &&
+          activity.placeId == placeId,
+    );
+  }
+
+  /*
+   * ============================================================
+   * HOTEL / PLACE KEYS
+   * ============================================================
+   */
+
+  String _placeKey(
+    Map<String, dynamic>? place,
+  ) {
+    if (place == null) {
+      return '';
+    }
+
+    final id =
+        PlaceMap.id(place);
+
+    if (id.isNotEmpty) {
+      return id;
+    }
+
+    final lat =
+        PlaceMap.latitude(place);
+
+    final lng =
+        PlaceMap.longitude(place);
+
+    return [
+      PlaceMap.name(place),
+      lat?.toStringAsFixed(6) ?? '',
+      lng?.toStringAsFixed(6) ?? '',
+    ].join('|');
+  }
+
+  /*
+   * ============================================================
+   * ROUTE / TRAVEL TIME
+   * ============================================================
+   */
+
+  Future<int> _travelMinutes(
     RoutePoint from,
     RoutePoint to,
   ) async {
+    final key =
+        '${from.latitude.toStringAsFixed(5)},'
+        '${from.longitude.toStringAsFixed(5)}'
+        '->'
+        '${to.latitude.toStringAsFixed(5)},'
+        '${to.longitude.toStringAsFixed(5)}';
+
+    final cached =
+        _travelMinutesCache[key];
+
+    if (cached != null) {
+      return cached;
+    }
+
     try {
       final result =
           await _routeService.calculateRoute(
@@ -359,19 +1502,29 @@ class ItineraryGeneratorService {
         stops: [to],
       );
 
-      return Duration(
-        seconds:
-            _durationToSeconds(
-          result.duration,
-        ),
+      final seconds =
+          _durationToSeconds(
+        result.duration,
       );
+
+      final minutes =
+          (seconds / 60).ceil();
+
+      _travelMinutesCache[key] =
+          minutes;
+
+      return minutes;
     } catch (_) {
       /*
-       * Fallback when a leg cannot be calculated.
+       * Safe fallback so a temporary route API problem does not
+       * completely destroy the itinerary.
        */
-      return const Duration(
-        minutes: 30,
-      );
+      const fallback = 20;
+
+      _travelMinutesCache[key] =
+          fallback;
+
+      return fallback;
     }
   }
 
@@ -379,158 +1532,57 @@ class ItineraryGeneratorService {
     String value,
   ) {
     final cleaned =
-        value.replaceAll('s', '');
+        value.replaceAll(
+      RegExp(r'[^0-9.]'),
+      '',
+    );
 
-    return double.tryParse(cleaned)
-            ?.round() ??
+    return double.tryParse(
+          cleaned,
+        )?.round() ??
         0;
   }
 
-  Duration _visitDuration(
-    String type,
+  /*
+   * ============================================================
+   * DATE
+   * ============================================================
+   */
+
+  DateTime _readDate(
+    dynamic value,
   ) {
-    switch (type) {
-      case 'hotel':
-        return const Duration(
-          minutes: 45,
-        );
-
-      case 'restaurant':
-        return const Duration(
-          minutes: 60,
-        );
-
-      case 'tourist_spot':
-        return const Duration(
-          hours: 2,
-        );
-
-      default:
-        return const Duration(
-          hours: 1,
-        );
-    }
-  }
-
-  ItineraryActivity _createActivity({
-    required String tripId,
-    required RoutePoint point,
-    required DateTime startTime,
-    required DateTime endTime,
-  }) {
-    ActivityType type;
-
-    switch (point.type) {
-      case 'hotel':
-        type = ActivityType.hotel;
-        break;
-
-      case 'restaurant':
-        type = ActivityType.restaurant;
-        break;
-
-      case 'tourist_spot':
-        type = ActivityType.spot;
-        break;
-
-      default:
-        type = ActivityType.spot;
-    }
-
-    return ItineraryActivity(
-      id:
-          '${tripId}_${point.id}_${startTime.millisecondsSinceEpoch}',
-      title: point.name,
-      description:
-          _descriptionForType(
-        point.type,
-      ),
-      startTime: startTime,
-      endTime: endTime,
-      cost: 0,
-      type: type,
-    );
-  }
-
-  String _descriptionForType(
-    String type,
-  ) {
-    switch (type) {
-      case 'tourist_spot':
-        return 'Tourist place visit';
-
-      case 'hotel':
-        return 'Hotel stay';
-
-      case 'restaurant':
-        return 'Meal';
-
-      default:
-        return 'Travel activity';
-    }
-  }
-
-  Map<String, dynamic>? _readSelectedPlace(
-    dynamic value, {
-    required String fallbackType,
-  }) {
-    if (value is! Map) {
-      return null;
-    }
-
-    final location =
-        value['location'];
-
-    if (location is! Map) {
-      return null;
-    }
-
-    final latitude =
-        (location['latitude'] as num?)
-            ?.toDouble();
-
-    final longitude =
-        (location['longitude'] as num?)
-            ?.toDouble();
-
-    if (latitude == null ||
-        longitude == null) {
-      return null;
-    }
-
-    final displayName =
-        value['displayName'];
-
-    String name =
-        'Selected Location';
-
-    if (displayName is Map &&
-        displayName['text'] != null) {
-      name =
-          displayName['text'].toString();
-    }
-
-    return {
-      'id':
-          value['id']?.toString() ??
-              fallbackType,
-      'name': name,
-      'address':
-          value['formattedAddress']
-                  ?.toString() ??
-              '',
-      'latitude': latitude,
-      'longitude': longitude,
-    };
-  }
-
-  DateTime _readDate(dynamic value) {
     if (value is Timestamp) {
       return value.toDate();
     }
 
-    return DateTime.parse(
-      value.toString(),
+    if (value is DateTime) {
+      return value;
+    }
+
+    final parsed =
+        DateTime.tryParse(
+      value?.toString() ?? '',
     );
+
+    if (parsed == null) {
+      throw Exception(
+        'Invalid trip start date.',
+      );
+    }
+
+    return parsed;
   }
+}
+
+class _ScheduleResult {
+  final RoutePoint point;
+  final DateTime time;
+  final int sequence;
+
+  const _ScheduleResult({
+    required this.point,
+    required this.time,
+    required this.sequence,
+  });
 }

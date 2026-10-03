@@ -417,6 +417,20 @@ class _DayWiseItineraryScreenState
           actions: [
             IconButton(
               icon: const Icon(
+                Icons.home_rounded,
+              ),
+              tooltip: 'Home',
+              onPressed: () {
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  AppRoutes.home,
+                  (route) => false,
+                );
+              },
+            ),
+
+            IconButton(
+              icon: const Icon(
                 Icons.edit_calendar,
               ),
               tooltip: 'Customize',
