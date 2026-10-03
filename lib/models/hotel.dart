@@ -50,9 +50,12 @@ class Hotel {
 /// Firestore field: trips/{id}.hotelPlans = [{dayNumber, hotel: {...}}]
 class HotelPlan {
   final int dayNumber;
+  final Map<String, dynamic> hotel;
 
-  const HotelPlan({required this.dayNumber, required this.hotel});
-
+  const HotelPlan({
+    required this.dayNumber,
+    required this.hotel,
+  });
   Map<String, dynamic> toJson() => {
         'dayNumber': dayNumber,
         'hotel': hotel,
