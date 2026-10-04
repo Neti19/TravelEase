@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/trip_member_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class InvitePeopleScreen extends StatefulWidget {
 final String tripId;
@@ -112,6 +113,7 @@ style: TextStyle(
 fontWeight: FontWeight.w800,
 ),
 ),
+actions: const [DashboardNavigationButton()],
 ),
 body: _buildBody(),
 );

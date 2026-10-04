@@ -9,38 +9,33 @@ import '../../services/places_service.dart';
 import '../../services/trip_destination_service.dart';
 import '../../services/trip_service.dart';
 import '../../services/place_details_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class SelectDestinationScreen extends StatefulWidget {
   final String? tripId;
 
-  const SelectDestinationScreen({
-    super.key,
-    this.tripId,
-  });
+  const SelectDestinationScreen({super.key, this.tripId});
 
   @override
   State<SelectDestinationScreen> createState() =>
       _SelectDestinationScreenState();
 }
 
-class _SelectDestinationScreenState
-    extends State<SelectDestinationScreen> {
+class _SelectDestinationScreenState extends State<SelectDestinationScreen> {
   final PlacesService _placesService = PlacesService();
 
-  final TripDestinationService _destinationService =
-  TripDestinationService();
+  final TripDestinationService _destinationService = TripDestinationService();
 
   final TripService _tripService = TripService();
 
-  final PlaceDetailsService _placeDetailsService =
-  PlaceDetailsService();
+  final PlaceDetailsService _placeDetailsService = PlaceDetailsService();
 
-  final TextEditingController _searchController =
-  TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   GoogleMapController? _mapController;
 
   Timer? _searchDebounce;
+  int _searchRequestId = 0;
 
   String? _tripId;
 
@@ -49,6 +44,7 @@ class _SelectDestinationScreenState
   bool _saving = false;
   bool _selectingDestination = false;
   bool _loadingNearby = false;
+  String? _nearbyPlacesError;
 
   String _startingLocation = 'Starting location';
 
@@ -109,14 +105,14 @@ class _SelectDestinationScreenState
     try {
       final trip = await _tripService.getTrip(tripId);
 
-      final savedDestinations =
-      await _destinationService.getDestinations(tripId);
+      final savedDestinations = await _destinationService.getDestinations(
+        tripId,
+      );
 
       if (!mounted) return;
 
       if (trip != null) {
-        _startingLocation =
-        trip.startLocation.trim().isNotEmpty
+        _startingLocation = trip.startLocation.trim().isNotEmpty
             ? trip.startLocation.trim()
             : 'Starting location';
 
@@ -128,11 +124,9 @@ class _SelectDestinationScreenState
       if (savedDestinations.isNotEmpty) {
         final destination = savedDestinations.first;
 
-        final latitude =
-        (destination['latitude'] as num?)?.toDouble();
+        final latitude = (destination['latitude'] as num?)?.toDouble();
 
-        final longitude =
-        (destination['longitude'] as num?)?.toDouble();
+        final longitude = (destination['longitude'] as num?)?.toDouble();
 
         if (latitude != null && longitude != null) {
           _selectedDestination = {
@@ -147,39 +141,27 @@ class _SelectDestinationScreenState
         _loading = false;
       });
 
-      await Future.delayed(
-        const Duration(milliseconds: 150),
-      );
+      await Future.delayed(const Duration(milliseconds: 150));
 
       if (!mounted) return;
 
       if (_selectedDestination != null) {
-        final latitude =
-        (_selectedDestination!['latitude'] as num).toDouble();
+        final latitude = (_selectedDestination!['latitude'] as num).toDouble();
 
-        final longitude =
-        (_selectedDestination!['longitude'] as num).toDouble();
+        final longitude = (_selectedDestination!['longitude'] as num)
+            .toDouble();
 
         await _mapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(latitude, longitude),
-            14,
-          ),
+          CameraUpdate.newLatLngZoom(LatLng(latitude, longitude), 14),
         );
 
         await _loadDestinationDetails();
 
-        await _loadNearbyPlaces(
-          latitude,
-          longitude,
-        );
+        await _loadNearbyPlaces(latitude, longitude);
       } else {
         await _mapController?.animateCamera(
           CameraUpdate.newLatLngZoom(
-            LatLng(
-              _startingLatitude,
-              _startingLongitude,
-            ),
+            LatLng(_startingLatitude, _startingLongitude),
             10,
           ),
         );
@@ -191,9 +173,7 @@ class _SelectDestinationScreenState
         _loading = false;
       });
 
-      _showMessage(
-        'Could not load trip details: $e',
-      );
+      _showMessage('Could not load trip details: $e');
     }
   }
 
@@ -203,6 +183,7 @@ class _SelectDestinationScreenState
 
   Future<void> _searchPlaces(String value) async {
     _searchDebounce?.cancel();
+    final requestId = ++_searchRequestId;
 
     final query = value.trim();
 
@@ -216,59 +197,56 @@ class _SelectDestinationScreenState
       return;
     }
 
-    _searchDebounce = Timer(
-      const Duration(milliseconds: 400),
-          () async {
-        try {
-          if (!mounted) return;
+    if (mounted) {
+      setState(() {
+        _suggestions = [];
+        _searching = true;
+      });
+    }
 
-          setState(() {
-            _searching = true;
-          });
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () async {
+      try {
+        if (!mounted) return;
 
-          final results = await _placesService.autocomplete(
-            query,
-            latitude: _startingLatitude,
-            longitude: _startingLongitude,
-          );
+        final results = await _placesService.autocomplete(
+          query,
+          latitude: _startingLatitude,
+          longitude: _startingLongitude,
+        );
 
-          if (!mounted) return;
-
-          setState(() {
-            _suggestions = results;
-            _searching = false;
-          });
-        } catch (e) {
-          if (!mounted) return;
-
-          setState(() {
-            _searching = false;
-          });
-
-          _showMessage(
-            'Place search failed: $e',
-          );
+        if (!mounted ||
+            requestId != _searchRequestId ||
+            _searchController.text.trim() != query) {
+          return;
         }
-      },
-    );
+
+        setState(() {
+          _suggestions = results;
+          _searching = false;
+        });
+      } catch (e) {
+        if (!mounted || requestId != _searchRequestId) return;
+
+        setState(() {
+          _searching = false;
+        });
+
+        _showMessage('Place search failed: $e');
+      }
+    });
   }
 
   // ===========================================================================
   // SEARCH RESULT
   // ===========================================================================
 
-  Future<void> _selectSearchResult(
-      Map<String, dynamic> suggestion,
-      ) async {
+  Future<void> _selectSearchResult(Map<String, dynamic> suggestion) async {
     if (_selectingDestination) return;
 
-    final placeId =
-        suggestion['placeId']?.toString() ?? '';
+    final placeId = suggestion['placeId']?.toString() ?? '';
 
     if (placeId.isEmpty) {
-      _showMessage(
-        'This place cannot be selected.',
-      );
+      _showMessage('This place cannot be selected.');
       return;
     }
 
@@ -279,50 +257,39 @@ class _SelectDestinationScreenState
 
     try {
       // Get exact coordinates of the clicked suggestion.
-      final details =
-      await _placesService.getPlaceDetails(placeId);
+      final details = await _placesService.getPlaceDetails(placeId);
 
-      final location =
-      details['location'] as Map<String, dynamic>?;
+      final location = details['location'] as Map<String, dynamic>?;
 
-      final displayName =
-      details['displayName'] as Map<String, dynamic>?;
+      final displayName = details['displayName'] as Map<String, dynamic>?;
 
-      final latitude =
-      (location?['latitude'] as num?)?.toDouble();
+      final latitude = (location?['latitude'] as num?)?.toDouble();
 
-      final longitude =
-      (location?['longitude'] as num?)?.toDouble();
+      final longitude = (location?['longitude'] as num?)?.toDouble();
 
       if (latitude == null || longitude == null) {
-        _showMessage(
-          'This place does not have a valid map location.',
-        );
+        _showMessage('This place does not have a valid map location.');
         return;
       }
 
-      final name = <String>[
-        displayName?['text']?.toString() ?? '',
-        suggestion['mainText']?.toString() ?? '',
-        suggestion['description']?.toString() ?? '',
-      ]
-          .map((value) => value.trim())
-          .firstWhere(
-            (value) => value.isNotEmpty,
-        orElse: () => 'Selected destination',
-      );
+      final name =
+          <String>[
+                displayName?['text']?.toString() ?? '',
+                suggestion['mainText']?.toString() ?? '',
+                suggestion['description']?.toString() ?? '',
+              ]
+              .map((value) => value.trim())
+              .firstWhere(
+                (value) => value.isNotEmpty,
+                orElse: () => 'Selected destination',
+              );
 
       final formattedAddress =
-          details['formattedAddress']
-              ?.toString()
-              .trim() ??
-              '';
+          details['formattedAddress']?.toString().trim() ?? '';
 
       final address = formattedAddress.isNotEmpty
           ? formattedAddress
-          : suggestion['secondaryText']
-          ?.toString() ??
-          name;
+          : suggestion['secondaryText']?.toString() ?? name;
 
       await _setDestination(
         name: name,
@@ -338,16 +305,11 @@ class _SelectDestinationScreenState
       _searchController.clear();
 
       await _mapController?.animateCamera(
-        CameraUpdate.newLatLngZoom(
-          LatLng(latitude, longitude),
-          14,
-        ),
+        CameraUpdate.newLatLngZoom(LatLng(latitude, longitude), 14),
       );
     } catch (e) {
       if (mounted) {
-        _showMessage(
-          'Could not select this destination: $e',
-        );
+        _showMessage('Could not select this destination: $e');
       }
     } finally {
       if (mounted) {
@@ -362,9 +324,7 @@ class _SelectDestinationScreenState
   // MAP TAP
   // ===========================================================================
 
-  Future<void> _selectMapPoint(
-      LatLng position,
-      ) async {
+  Future<void> _selectMapPoint(LatLng position) async {
     if (_selectingDestination) return;
 
     setState(() {
@@ -394,9 +354,7 @@ class _SelectDestinationScreenState
           .where((value) => value.isNotEmpty)
           .toList();
 
-      final name = parts.isNotEmpty
-          ? parts.first
-          : 'Selected destination';
+      final name = parts.isNotEmpty ? parts.first : 'Selected destination';
 
       await _setDestination(
         name: name,
@@ -407,9 +365,7 @@ class _SelectDestinationScreenState
       );
     } catch (e) {
       if (mounted) {
-        _showMessage(
-          'Could not select this map location: $e',
-        );
+        _showMessage('Could not select this map location: $e');
       }
     } finally {
       if (mounted) {
@@ -448,23 +404,17 @@ class _SelectDestinationScreenState
      * the new one.
      */
 
-    final existing =
-    await _destinationService.getDestinations(tripId);
+    final existing = await _destinationService.getDestinations(tripId);
 
     for (final destination in existing) {
-      final id =
-      destination['id']?.toString();
+      final id = destination['id']?.toString();
 
       if (id != null && id.isNotEmpty) {
-        await _destinationService.removeDestination(
-          tripId,
-          id,
-        );
+        await _destinationService.removeDestination(tripId, id);
       }
     }
 
-    final documentId =
-    await _destinationService.addDestination(
+    final documentId = await _destinationService.addDestination(
       tripId: tripId,
       name: name,
       address: address,
@@ -475,23 +425,18 @@ class _SelectDestinationScreenState
     );
 
     if (documentId == null) {
-      throw Exception(
-        'Could not save the selected destination.',
-      );
+      throw Exception('Could not save the selected destination.');
     }
 
-    await _tripService.updateTrip(
-      tripId,
-      {
-        'destination': name,
-        'destinationAddress': address,
-        'destinationLatitude': latitude,
-        'destinationLongitude': longitude,
-        'destinationPlaceId': placeId,
-        'destinationCount': 1,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-    );
+    await _tripService.updateTrip(tripId, {
+      'destination': name,
+      'destinationAddress': address,
+      'destinationLatitude': latitude,
+      'destinationLongitude': longitude,
+      'destinationPlaceId': placeId,
+      'destinationCount': 1,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
     if (!mounted) return;
 
@@ -508,23 +453,18 @@ class _SelectDestinationScreenState
 
       _destinationDetails = null;
       _nearbyPlaces = [];
+      _nearbyPlacesError = null;
     });
 
     await _mapController?.animateCamera(
-      CameraUpdate.newLatLngZoom(
-        LatLng(latitude, longitude),
-        14,
-      ),
+      CameraUpdate.newLatLngZoom(LatLng(latitude, longitude), 14),
     );
 
     // Load the selected destination's rich details.
     await _loadDestinationDetails();
 
     // Then suggest nearby tourist places.
-    await _loadNearbyPlaces(
-      latitude,
-      longitude,
-    );
+    await _loadNearbyPlaces(latitude, longitude);
   }
 
   // ===========================================================================
@@ -536,16 +476,12 @@ class _SelectDestinationScreenState
 
     if (destination == null) return;
 
-    final placeId =
-        destination['placeId']?.toString() ?? '';
+    final placeId = destination['placeId']?.toString() ?? '';
 
     if (placeId.isEmpty) return;
 
     try {
-      final details =
-      await _placeDetailsService.getPlaceDetails(
-        placeId,
-      );
+      final details = await _placeDetailsService.getPlaceDetails(placeId);
 
       if (!mounted || details == null) return;
 
@@ -562,20 +498,17 @@ class _SelectDestinationScreenState
   // NEARBY PLACES
   // ===========================================================================
 
-  Future<void> _loadNearbyPlaces(
-      double latitude,
-      double longitude,
-      ) async {
+  Future<void> _loadNearbyPlaces(double latitude, double longitude) async {
     if (!mounted) return;
 
     setState(() {
       _loadingNearby = true;
       _nearbyPlaces = [];
+      _nearbyPlacesError = null;
     });
 
     try {
-      final results =
-      await _placesService.searchNearbyDestinations(
+      final results = await _placesService.searchNearbyDestinations(
         latitude: latitude,
         longitude: longitude,
         radius: 10000,
@@ -584,22 +517,23 @@ class _SelectDestinationScreenState
 
       if (!mounted) return;
 
-      final selectedPlaceId =
-      _selectedDestination?['placeId']?.toString();
+      final selectedPlaceId = _selectedDestination?['placeId']?.toString();
 
-      final filtered = results.where((place) {
-        final placeId =
-            place['placeId']?.toString() ??
-                place['id']?.toString();
+      final filtered = results
+          .where((place) {
+            final placeId =
+                place['placeId']?.toString() ?? place['id']?.toString();
 
-        if (selectedPlaceId != null &&
-            selectedPlaceId.isNotEmpty &&
-            placeId == selectedPlaceId) {
-          return false;
-        }
+            if (selectedPlaceId != null &&
+                selectedPlaceId.isNotEmpty &&
+                placeId == selectedPlaceId) {
+              return false;
+            }
 
-        return true;
-      }).take(6).toList();
+            return true;
+          })
+          .take(6)
+          .toList();
 
       setState(() {
         _nearbyPlaces = filtered;
@@ -611,6 +545,7 @@ class _SelectDestinationScreenState
       setState(() {
         _loadingNearby = false;
         _nearbyPlaces = [];
+        _nearbyPlacesError = e.toString();
       });
     }
   }
@@ -619,9 +554,7 @@ class _SelectDestinationScreenState
   // ADD NEARBY TOURIST PLACE
   // ===========================================================================
 
-  Future<void> _addNearbyPlace(
-      Map<String, dynamic> place,
-      ) async {
+  Future<void> _addNearbyPlace(Map<String, dynamic> place) async {
     final tripId = _tripId;
 
     if (tripId == null || tripId.isEmpty) {
@@ -630,14 +563,10 @@ class _SelectDestinationScreenState
     }
 
     final placeId =
-        place['placeId']?.toString() ??
-            place['id']?.toString() ??
-            '';
+        place['placeId']?.toString() ?? place['id']?.toString() ?? '';
 
     if (placeId.isEmpty) {
-      _showMessage(
-        'This place cannot be added.',
-      );
+      _showMessage('This place cannot be added.');
       return;
     }
 
@@ -650,45 +579,38 @@ class _SelectDestinationScreenState
     });
 
     try {
-      final details =
-      await _placesService.getPlaceDetails(
-        placeId,
-      );
+      final details = await _placesService.getPlaceDetails(placeId);
 
-      final location =
-      details['location'] as Map<String, dynamic>?;
+      final location = details['location'] as Map<String, dynamic>?;
 
-      final displayName =
-      details['displayName'] as Map<String, dynamic>?;
+      final displayName = details['displayName'] as Map<String, dynamic>?;
 
       final latitude =
           (location?['latitude'] as num?)?.toDouble() ??
-              (place['latitude'] as num?)?.toDouble();
+          (place['latitude'] as num?)?.toDouble();
 
       final longitude =
           (location?['longitude'] as num?)?.toDouble() ??
-              (place['longitude'] as num?)?.toDouble();
+          (place['longitude'] as num?)?.toDouble();
 
       if (latitude == null || longitude == null) {
-        throw Exception(
-          'Place location is unavailable.',
-        );
+        throw Exception('Place location is unavailable.');
       }
 
       final name =
           displayName?['text']?.toString() ??
-              place['name']?.toString() ??
-              'Tourist place';
+          place['name']?.toString() ??
+          'Tourist place';
 
       final address =
           details['formattedAddress']?.toString() ??
-              place['address']?.toString() ??
-              '';
+          place['address']?.toString() ??
+          '';
 
       final category =
           details['primaryType']?.toString() ??
-              place['category']?.toString() ??
-              'tourist_attraction';
+          place['category']?.toString() ??
+          'tourist_attraction';
 
       await _destinationService.saveSelectedPlace(
         tripId: tripId,
@@ -702,14 +624,10 @@ class _SelectDestinationScreenState
 
       if (!mounted) return;
 
-      _showMessage(
-        '$name added to your places.',
-      );
+      _showMessage('$name added to your places.');
     } catch (e) {
       if (mounted) {
-        _showMessage(
-          'Could not add this place: $e',
-        );
+        _showMessage('Could not add this place: $e');
       }
     } finally {
       if (mounted) {
@@ -734,29 +652,22 @@ class _SelectDestinationScreenState
     final destination = _selectedDestination;
 
     if (destination != null) {
-      final id =
-      destination['id']?.toString();
+      final id = destination['id']?.toString();
 
       if (id != null && id.isNotEmpty) {
-        await _destinationService.removeDestination(
-          tripId,
-          id,
-        );
+        await _destinationService.removeDestination(tripId, id);
       }
     }
 
-    await _tripService.updateTrip(
-      tripId,
-      {
-        'destination': '',
-        'destinationAddress': '',
-        'destinationLatitude': null,
-        'destinationLongitude': null,
-        'destinationPlaceId': null,
-        'destinationCount': 0,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-    );
+    await _tripService.updateTrip(tripId, {
+      'destination': '',
+      'destinationAddress': '',
+      'destinationLatitude': null,
+      'destinationLongitude': null,
+      'destinationPlaceId': null,
+      'destinationCount': 0,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
     if (!mounted) return;
 
@@ -768,10 +679,7 @@ class _SelectDestinationScreenState
 
     await _mapController?.animateCamera(
       CameraUpdate.newLatLngZoom(
-        LatLng(
-          _startingLatitude,
-          _startingLongitude,
-        ),
+        LatLng(_startingLatitude, _startingLongitude),
         10,
       ),
     );
@@ -790,9 +698,7 @@ class _SelectDestinationScreenState
     }
 
     if (_selectedDestination == null) {
-      _showMessage(
-        'Choose one destination before continuing.',
-      );
+      _showMessage('Choose one destination before continuing.');
       return;
     }
 
@@ -801,42 +707,26 @@ class _SelectDestinationScreenState
     });
 
     try {
-      await _tripService.updateTrip(
-        tripId,
-        {
-          'destination':
-          _selectedDestination!['name']
-              ?.toString() ??
-              '',
-          'destinationAddress':
-          _selectedDestination!['address']
-              ?.toString() ??
-              '',
-          'destinationLatitude':
-          _selectedDestination!['latitude'],
-          'destinationLongitude':
-          _selectedDestination!['longitude'],
-          'destinationPlaceId':
-          _selectedDestination!['placeId'],
-          'destinationCount': 1,
-          'updatedAt':
-          FieldValue.serverTimestamp(),
-        },
-      );
+      await _tripService.updateTrip(tripId, {
+        'destination': _selectedDestination!['name']?.toString() ?? '',
+        'destinationAddress':
+            _selectedDestination!['address']?.toString() ?? '',
+        'destinationLatitude': _selectedDestination!['latitude'],
+        'destinationLongitude': _selectedDestination!['longitude'],
+        'destinationPlaceId': _selectedDestination!['placeId'],
+        'destinationCount': 1,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
 
       if (!mounted) return;
 
       Navigator.pushNamed(
         context,
         AppRoutes.selectPreferences,
-        arguments: {
-          'tripId': tripId,
-        },
+        arguments: {'tripId': tripId},
       );
     } catch (e) {
-      _showMessage(
-        'Could not save destination: $e',
-      );
+      _showMessage('Could not save destination: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -857,11 +747,9 @@ class _SelectDestinationScreenState
       return {};
     }
 
-    final latitude =
-    (destination['latitude'] as num?)?.toDouble();
+    final latitude = (destination['latitude'] as num?)?.toDouble();
 
-    final longitude =
-    (destination['longitude'] as num?)?.toDouble();
+    final longitude = (destination['longitude'] as num?)?.toDouble();
 
     if (latitude == null || longitude == null) {
       return {};
@@ -869,25 +757,12 @@ class _SelectDestinationScreenState
 
     return {
       Marker(
-        markerId:
-        const MarkerId('selected_destination'),
-        position: LatLng(
-          latitude,
-          longitude,
-        ),
-        icon:
-        BitmapDescriptor.defaultMarkerWithHue(
-          BitmapDescriptor.hueAzure,
-        ),
+        markerId: const MarkerId('selected_destination'),
+        position: LatLng(latitude, longitude),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
         infoWindow: InfoWindow(
-          title:
-          destination['name']
-              ?.toString() ??
-              'Destination',
-          snippet:
-          destination['address']
-              ?.toString() ??
-              '',
+          title: destination['name']?.toString() ?? 'Destination',
+          snippet: destination['address']?.toString() ?? '',
         ),
       ),
     };
@@ -897,86 +772,53 @@ class _SelectDestinationScreenState
   // HELPERS
   // ===========================================================================
 
-  String _readPhotoUrl(
-      Map<String, dynamic>? data,
-      ) {
+  String _readPhotoUrl(Map<String, dynamic>? data) {
     if (data == null) return '';
 
-    return data['photoUrl']?.toString() ??
-        data['photoUri']?.toString() ??
-        '';
+    return data['photoUrl']?.toString() ?? data['photoUri']?.toString() ?? '';
   }
 
-  String _readPlaceName(
-      Map<String, dynamic> place,
-      ) {
-    final displayName =
-    place['displayName'];
+  String _readPlaceName(Map<String, dynamic> place) {
+    final displayName = place['displayName'];
 
-    if (displayName is Map &&
-        displayName['text'] != null) {
-      return displayName['text']
-          .toString()
-          .trim();
+    if (displayName is Map && displayName['text'] != null) {
+      return displayName['text'].toString().trim();
     }
 
-    return place['name']?.toString() ??
-        'Tourist place';
+    return place['name']?.toString() ?? 'Tourist place';
   }
 
-  String _readAddress(
-      Map<String, dynamic> place,
-      ) {
-    return place['formattedAddress']
-        ?.toString()
-        .trim()
-        .isNotEmpty ==
-        true
-        ? place['formattedAddress']
-        .toString()
-        .trim()
-        : place['address']?.toString() ??
-        '';
+  String _readAddress(Map<String, dynamic> place) {
+    return place['formattedAddress']?.toString().trim().isNotEmpty == true
+        ? place['formattedAddress'].toString().trim()
+        : place['address']?.toString() ?? '';
   }
 
-  double? _readRating(
-      Map<String, dynamic> place,
-      ) {
-    final value =
-    place['rating'];
+  double? _readRating(Map<String, dynamic> place) {
+    final value = place['rating'];
 
     if (value is num) {
       return value.toDouble();
     }
 
-    return double.tryParse(
-      value?.toString() ?? '',
-    );
+    return double.tryParse(value?.toString() ?? '');
   }
 
-  int? _readReviewCount(
-      Map<String, dynamic> place,
-      ) {
-    final value =
-    place['userRatingCount'];
+  int? _readReviewCount(Map<String, dynamic> place) {
+    final value = place['userRatingCount'];
 
     if (value is num) {
       return value.toInt();
     }
 
-    return int.tryParse(
-      value?.toString() ?? '',
-    );
+    return int.tryParse(value?.toString() ?? '');
   }
 
   void _showMessage(String message) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.fixed),
     );
   }
 
@@ -1001,16 +843,13 @@ class _SelectDestinationScreenState
       return const Scaffold(
         backgroundColor: Color(0xFFF7FAFC),
         body: Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFF1677FF),
-          ),
+          child: CircularProgressIndicator(color: Color(0xFF1677FF)),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor:
-      const Color(0xFFF7FAFC),
+      backgroundColor: const Color(0xFFF7FAFC),
       body: SafeArea(
         child: Column(
           children: [
@@ -1021,96 +860,63 @@ class _SelectDestinationScreenState
                 children: [
                   Positioned.fill(
                     child: GoogleMap(
-                      initialCameraPosition:
-                      CameraPosition(
-                        target:
-                        _selectedDestination !=
-                            null
+                      initialCameraPosition: CameraPosition(
+                        target: _selectedDestination != null
                             ? LatLng(
-                          (_selectedDestination![
-                          'latitude']
-                          as num)
-                              .toDouble(),
-                          (_selectedDestination![
-                          'longitude']
-                          as num)
-                              .toDouble(),
-                        )
-                            : LatLng(
-                          _startingLatitude,
-                          _startingLongitude,
-                        ),
-                        zoom:
-                        _selectedDestination !=
-                            null
-                            ? 14
-                            : 10,
+                                (_selectedDestination!['latitude'] as num)
+                                    .toDouble(),
+                                (_selectedDestination!['longitude'] as num)
+                                    .toDouble(),
+                              )
+                            : LatLng(_startingLatitude, _startingLongitude),
+                        zoom: _selectedDestination != null ? 14 : 10,
                       ),
 
                       markers: _markers(),
 
                       myLocationEnabled: false,
-                      myLocationButtonEnabled:
-                      false,
+                      myLocationButtonEnabled: false,
                       zoomControlsEnabled: false,
                       mapToolbarEnabled: false,
                       compassEnabled: true,
 
                       onTap: _selectMapPoint,
 
-                      onMapCreated:
-                          (controller) {
-                        _mapController =
-                            controller;
+                      onMapCreated: (controller) {
+                        _mapController = controller;
 
-                        Future.delayed(
-                          const Duration(
-                            milliseconds: 250,
-                          ),
-                              () {
-                            if (!mounted ||
-                                _mapController ==
-                                    null) {
-                              return;
-                            }
+                        Future.delayed(const Duration(milliseconds: 250), () {
+                          if (!mounted || _mapController == null) {
+                            return;
+                          }
 
-                            final destination =
-                                _selectedDestination;
+                          final destination = _selectedDestination;
 
-                            final target =
-                            destination !=
-                                null
-                                ? LatLng(
-                              (destination[
-                              'latitude']
-                              as num)
-                                  .toDouble(),
-                              (destination[
-                              'longitude']
-                              as num)
-                                  .toDouble(),
-                            )
-                                : LatLng(
-                              _startingLatitude,
-                              _startingLongitude,
-                            );
+                          final target = destination != null
+                              ? LatLng(
+                                  (destination['latitude'] as num).toDouble(),
+                                  (destination['longitude'] as num).toDouble(),
+                                )
+                              : LatLng(_startingLatitude, _startingLongitude);
 
-                            _mapController!
-                                .animateCamera(
-                              CameraUpdate
-                                  .newLatLngZoom(
-                                target,
-                                destination !=
-                                    null
-                                    ? 14
-                                    : 10,
-                              ),
-                            );
-                          },
-                        );
+                          _mapController!.animateCamera(
+                            CameraUpdate.newLatLngZoom(
+                              target,
+                              destination != null ? 14 : 10,
+                            ),
+                          );
+                        });
                       },
                     ),
                   ),
+
+                  if (_suggestions.isEmpty)
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 18,
+                      child: _buildMapInstruction(),
+                    ),
 
                   Positioned(
                     top: 14,
@@ -1120,42 +926,22 @@ class _SelectDestinationScreenState
                   ),
 
                   Positioned(
-                    left: 14,
-                    right: 14,
-                    bottom: 18,
-                    child:
-                    _buildMapInstruction(),
-                  ),
-
-                  Positioned(
                     right: 14,
                     bottom: 88,
-                    child:
-                    FloatingActionButton.small(
-                      heroTag:
-                      'destination_recenter_button',
-                      backgroundColor:
-                      Colors.white,
-                      foregroundColor:
-                      const Color(0xFF1677FF),
+                    child: FloatingActionButton.small(
+                      heroTag: 'destination_recenter_button',
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF1677FF),
                       elevation: 5,
                       onPressed: () {
-                        _mapController
-                            ?.animateCamera(
-                          CameraUpdate
-                              .newLatLngZoom(
-                            LatLng(
-                              _startingLatitude,
-                              _startingLongitude,
-                            ),
+                        _mapController?.animateCamera(
+                          CameraUpdate.newLatLngZoom(
+                            LatLng(_startingLatitude, _startingLongitude),
                             10,
                           ),
                         );
                       },
-                      child: const Icon(
-                        Icons
-                            .my_location_rounded,
-                      ),
+                      child: const Icon(Icons.my_location_rounded),
                     ),
                   ),
                 ],
@@ -1176,64 +962,49 @@ class _SelectDestinationScreenState
   Widget _buildTopHeader() {
     return Container(
       width: double.infinity,
-      padding:
-      const EdgeInsets.fromLTRB(
-        18,
-        12,
-        18,
-        14,
-      ),
-      color:
-      const Color(0xFFF7FAFC),
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+      color: const Color(0xFFF7FAFC),
       child: Row(
         children: [
           Container(
             width: 44,
             height: 44,
-            decoration:
-            BoxDecoration(
-              color:
-              const Color(0xFFDFF4FF),
-              borderRadius:
-              BorderRadius.circular(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDFF4FF),
+              borderRadius: BorderRadius.circular(14),
             ),
             child: const Icon(
               Icons.explore_rounded,
-              color:
-              Color(0xFF1677FF),
+              color: Color(0xFF1677FF),
               size: 24,
             ),
           ),
           const SizedBox(width: 12),
           const Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   '2. Choose your destination',
                   style: TextStyle(
-                    color:
-                    Color(0xFF102A43),
+                    color: Color(0xFF102A43),
                     fontSize: 18,
-                    fontWeight:
-                    FontWeight.w900,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 SizedBox(height: 3),
                 Text(
                   'Search or explore the map',
                   style: TextStyle(
-                    color:
-                    Color(0xFF627D98),
+                    color: Color(0xFF627D98),
                     fontSize: 12,
-                    fontWeight:
-                    FontWeight.w600,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
           ),
+          const DashboardNavigationButton(),
         ],
       ),
     );
@@ -1249,178 +1020,94 @@ class _SelectDestinationScreenState
         Material(
           elevation: 8,
           shadowColor: Colors.black26,
-          borderRadius:
-          BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(18),
           color: Colors.white,
           child: TextField(
-            controller:
-            _searchController,
-            onChanged:
-            _searchPlaces,
-            textInputAction:
-            TextInputAction.search,
-            decoration:
-            InputDecoration(
-              hintText:
-              'Search city, place or destination',
-              hintStyle:
-              const TextStyle(
-                color:
-                Color(0xFF829AB1),
+            controller: _searchController,
+            onChanged: _searchPlaces,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Search city, place or destination',
+              hintStyle: const TextStyle(
+                color: Color(0xFF829AB1),
                 fontSize: 14,
               ),
-              prefixIcon:
-              const Icon(
+              prefixIcon: const Icon(
                 Icons.search_rounded,
-                color:
-                Color(0xFF1677FF),
+                color: Color(0xFF1677FF),
               ),
-              suffixIcon:
-              _searching ||
-                  _selectingDestination
+              suffixIcon: _searching || _selectingDestination
                   ? const Padding(
-                padding:
-                EdgeInsets.all(
-                  12,
-                ),
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child:
-                  CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color:
-                    Color(
-                      0xFF1677FF,
-                    ),
-                  ),
-                ),
-              )
-                  : _searchController
-                  .text
-                  .isNotEmpty
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF1677FF),
+                        ),
+                      ),
+                    )
+                  : _searchController.text.isNotEmpty
                   ? IconButton(
-                icon:
-                const Icon(
-                  Icons
-                      .close_rounded,
-                ),
-                color:
-                const Color(
-                  0xFF627D98,
-                ),
-                onPressed: () {
-                  _searchController
-                      .clear();
+                      icon: const Icon(Icons.close_rounded),
+                      color: const Color(0xFF627D98),
+                      onPressed: () {
+                        _searchController.clear();
 
-                  setState(() {
-                    _suggestions =
-                    [];
-                  });
-                },
-              )
+                        setState(() {
+                          _suggestions = [];
+                        });
+                      },
+                    )
                   : null,
               filled: true,
-              fillColor:
-              Colors.white,
-              border:
-              OutlineInputBorder(
-                borderRadius:
-                BorderRadius.circular(
-                  18,
-                ),
-                borderSide:
-                BorderSide.none,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
               ),
-              contentPadding:
-              const EdgeInsets
-                  .symmetric(
-                vertical: 16,
-              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 16),
             ),
           ),
         ),
 
         if (_suggestions.isNotEmpty)
           Container(
-            margin:
-            const EdgeInsets.only(
-              top: 7,
-            ),
-            constraints:
-            const BoxConstraints(
-              maxHeight: 285,
-            ),
-            decoration:
-            BoxDecoration(
+            margin: const EdgeInsets.only(top: 7),
+            constraints: const BoxConstraints(maxHeight: 285),
+            decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius:
-              BorderRadius.circular(
-                18,
-              ),
+              borderRadius: BorderRadius.circular(18),
               boxShadow: const [
                 BoxShadow(
-                  color:
-                  Colors.black26,
+                  color: Colors.black26,
                   blurRadius: 16,
-                  offset:
-                  Offset(0, 7),
+                  offset: Offset(0, 7),
                 ),
               ],
             ),
-            child:
-            ListView.separated(
+            child: ListView.separated(
               shrinkWrap: true,
-              padding:
-              const EdgeInsets
-                  .symmetric(
-                vertical: 5,
-              ),
-              itemCount:
-              _suggestions.length,
-              separatorBuilder:
-                  (_, __) =>
-              const Divider(
-                height: 1,
-                indent: 64,
-                endIndent: 12,
-              ),
-              itemBuilder:
-                  (context, index) {
-                final item =
-                _suggestions[
-                index];
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              itemCount: _suggestions.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(height: 1, indent: 64, endIndent: 12),
+              itemBuilder: (context, index) {
+                final item = _suggestions[index];
 
-                final mainText =
-                    item['mainText']
-                        ?.toString()
-                        .trim() ??
-                        '';
+                final mainText = item['mainText']?.toString().trim() ?? '';
 
                 final secondaryText =
-                    item['secondaryText']
-                        ?.toString()
-                        .trim() ??
-                        '';
+                    item['secondaryText']?.toString().trim() ?? '';
 
                 return InkWell(
-                  borderRadius:
-                  BorderRadius
-                      .circular(
-                    14,
-                  ),
-                  onTap:
-                  _selectingDestination
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: _selectingDestination
                       ? null
-                      : () =>
-                      _selectSearchResult(
-                        item,
-                      ),
-                  child:
-                  Padding(
-                    padding:
-                    const EdgeInsets
-                        .symmetric(
+                      : () => _selectSearchResult(item),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 10,
                     ),
@@ -1429,98 +1116,50 @@ class _SelectDestinationScreenState
                         Container(
                           width: 42,
                           height: 42,
-                          decoration:
-                          BoxDecoration(
-                            color:
-                            const Color(
-                              0xFFE8F3FF,
-                            ),
-                            borderRadius:
-                            BorderRadius
-                                .circular(
-                              12,
-                            ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE8F3FF),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child:
-                          const Icon(
-                            Icons
-                                .location_on_rounded,
-                            color:
-                            Color(
-                              0xFF1677FF,
-                            ),
+                          child: const Icon(
+                            Icons.location_on_rounded,
+                            color: Color(0xFF1677FF),
                           ),
                         ),
-                        const SizedBox(
-                          width: 11,
-                        ),
+                        const SizedBox(width: 11),
                         Expanded(
-                          child:
-                          Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment
-                                .start,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                mainText
-                                    .isNotEmpty
-                                    ? mainText
-                                    : 'Destination',
-                                maxLines:
-                                1,
-                                overflow:
-                                TextOverflow
-                                    .ellipsis,
-                                style:
-                                const TextStyle(
-                                  color:
-                                  Color(
-                                    0xFF102A43,
-                                  ),
-                                  fontWeight:
-                                  FontWeight
-                                      .w800,
-                                  fontSize:
-                                  14,
+                                mainText.isNotEmpty ? mainText : 'Destination',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF102A43),
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
                                 ),
                               ),
-                              if (secondaryText
-                                  .isNotEmpty) ...[
-                                const SizedBox(
-                                  height: 3,
-                                ),
+                              if (secondaryText.isNotEmpty) ...[
+                                const SizedBox(height: 3),
                                 Text(
                                   secondaryText,
-                                  maxLines:
-                                  2,
-                                  overflow:
-                                  TextOverflow
-                                      .ellipsis,
-                                  style:
-                                  const TextStyle(
-                                    color:
-                                    Color(
-                                      0xFF627D98,
-                                    ),
-                                    fontSize:
-                                    12,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFF627D98),
+                                    fontSize: 12,
                                   ),
                                 ),
                               ],
                             ],
                           ),
                         ),
-                        const SizedBox(
-                          width: 6,
-                        ),
+                        const SizedBox(width: 6),
                         const Icon(
-                          Icons
-                              .arrow_forward_ios_rounded,
+                          Icons.arrow_forward_ios_rounded,
                           size: 14,
-                          color:
-                          Color(
-                            0xFF9FB3C8,
-                          ),
+                          color: Color(0xFF9FB3C8),
                         ),
                       ],
                     ),
@@ -1540,49 +1179,33 @@ class _SelectDestinationScreenState
   Widget _buildMapInstruction() {
     return Material(
       elevation: 4,
-      borderRadius:
-      BorderRadius.circular(16),
-      color:
-      Colors.white.withOpacity(0.95),
+      borderRadius: BorderRadius.circular(16),
+      color: Colors.white.withOpacity(0.95),
       child: Padding(
-        padding:
-        const EdgeInsets.symmetric(
-          horizontal: 13,
-          vertical: 10,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
         child: Row(
           children: [
             Container(
               width: 34,
               height: 34,
-              decoration:
-              BoxDecoration(
-                color:
-                const Color(0xFFFFF1EC),
-                borderRadius:
-                BorderRadius.circular(
-                  10,
-                ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF1EC),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: const Icon(
                 Icons.touch_app_rounded,
-                color:
-                Color(0xFFFF8A65),
+                color: Color(0xFFFF8A65),
                 size: 20,
               ),
             ),
-            const SizedBox(
-              width: 10,
-            ),
+            const SizedBox(width: 10),
             const Expanded(
               child: Text(
                 'Tap anywhere on the map to choose a destination',
                 style: TextStyle(
-                  color:
-                  Color(0xFF486581),
+                  color: Color(0xFF486581),
                   fontSize: 12,
-                  fontWeight:
-                  FontWeight.w700,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -1597,29 +1220,15 @@ class _SelectDestinationScreenState
   // ===========================================================================
 
   Widget _buildBottomPanel() {
-    final destination =
-        _selectedDestination;
+    final destination = _selectedDestination;
 
     return Container(
       width: double.infinity,
-      constraints:
-      const BoxConstraints(
-        maxHeight: 440,
-      ),
-      padding:
-      const EdgeInsets.fromLTRB(
-        16,
-        14,
-        16,
-        16,
-      ),
-      decoration:
-      const BoxDecoration(
+      constraints: const BoxConstraints(maxHeight: 440),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      decoration: const BoxDecoration(
         color: Colors.white,
-        borderRadius:
-        BorderRadius.vertical(
-          top: Radius.circular(26),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
         boxShadow: [
           BoxShadow(
             color: Colors.black12,
@@ -1629,34 +1238,25 @@ class _SelectDestinationScreenState
         ],
       ),
       child: SingleChildScrollView(
-        physics:
-        const BouncingScrollPhysics(),
+        physics: const BouncingScrollPhysics(),
         child: Column(
-          mainAxisSize:
-          MainAxisSize.min,
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildStartingLocation(),
 
-            const SizedBox(
-              height: 11,
-            ),
+            const SizedBox(height: 11),
 
             if (destination == null)
               _buildNoDestination()
             else ...[
               _buildDestinationCard(),
 
-              const SizedBox(
-                height: 16,
-              ),
+              const SizedBox(height: 16),
 
               _buildNearbyPlaces(),
 
-              const SizedBox(
-                height: 14,
-              ),
+              const SizedBox(height: 14),
 
               _buildContinueButton(),
             ],
@@ -1676,55 +1276,38 @@ class _SelectDestinationScreenState
         Container(
           width: 38,
           height: 38,
-          decoration:
-          BoxDecoration(
-            color:
-            const Color(0xFFE8F3FF),
-            borderRadius:
-            BorderRadius.circular(
-              11,
-            ),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE8F3FF),
+            borderRadius: BorderRadius.circular(11),
           ),
           child: const Icon(
             Icons.trip_origin_rounded,
-            color:
-            Color(0xFF1677FF),
+            color: Color(0xFF1677FF),
             size: 20,
           ),
         ),
-        const SizedBox(
-          width: 10,
-        ),
+        const SizedBox(width: 10),
         Expanded(
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
                 'Starting from',
                 style: TextStyle(
-                  color:
-                  Color(0xFF829AB1),
+                  color: Color(0xFF829AB1),
                   fontSize: 10,
-                  fontWeight:
-                  FontWeight.w700,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(
-                height: 2,
-              ),
+              const SizedBox(height: 2),
               Text(
                 _startingLocation,
                 maxLines: 2,
-                overflow:
-                TextOverflow.ellipsis,
-                style:
-                const TextStyle(
-                  color:
-                  Color(0xFF102A43),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF102A43),
                   fontSize: 13,
-                  fontWeight:
-                  FontWeight.w800,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
@@ -1741,39 +1324,22 @@ class _SelectDestinationScreenState
   Widget _buildNoDestination() {
     return Container(
       width: double.infinity,
-      padding:
-      const EdgeInsets.all(14),
-      decoration:
-      BoxDecoration(
-        color:
-        const Color(0xFFF7FAFC),
-        borderRadius:
-        BorderRadius.circular(16),
-        border: Border.all(
-          color:
-          const Color(0xFFE1EAF2),
-        ),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE1EAF2)),
       ),
       child: const Row(
         children: [
-          Icon(
-            Icons
-                .location_searching_rounded,
-            color:
-            Color(0xFF829AB1),
-          ),
-          SizedBox(
-            width: 10,
-          ),
+          Icon(Icons.location_searching_rounded, color: Color(0xFF829AB1)),
+          SizedBox(width: 10),
           Expanded(
             child: Text(
               'Search for a destination or tap a place on the map.',
-              style:
-              TextStyle(
-                color:
-                Color(0xFF627D98),
-                fontWeight:
-                FontWeight.w700,
+              style: TextStyle(
+                color: Color(0xFF627D98),
+                fontWeight: FontWeight.w700,
                 fontSize: 13,
               ),
             ),
@@ -1788,56 +1354,28 @@ class _SelectDestinationScreenState
   // ===========================================================================
 
   Widget _buildDestinationCard() {
-    final destination =
-    _selectedDestination!;
+    final destination = _selectedDestination!;
 
-    final photoUrl =
-    _readPhotoUrl(
-      _destinationDetails,
-    );
+    final photoUrl = _readPhotoUrl(_destinationDetails);
 
-    final rating =
-    _readRating(
-      _destinationDetails ??
-          destination,
-    );
+    final rating = _readRating(_destinationDetails ?? destination);
 
-    final reviewCount =
-    _readReviewCount(
-      _destinationDetails ??
-          destination,
-    );
+    final reviewCount = _readReviewCount(_destinationDetails ?? destination);
 
-    final name =
-        destination['name']
-            ?.toString() ??
-            'Destination';
+    final name = destination['name']?.toString() ?? 'Destination';
 
-    final address =
-        destination['address']
-            ?.toString() ??
-            '';
+    final address = destination['address']?.toString() ?? '';
 
     return Container(
       width: double.infinity,
-      decoration:
-      BoxDecoration(
-        color:
-        const Color(0xFFE8F3FF),
-        borderRadius:
-        BorderRadius.circular(
-          18,
-        ),
-        border: Border.all(
-          color:
-          const Color(0xFFB9D8FF),
-        ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F3FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFB9D8FF)),
       ),
-      clipBehavior:
-      Clip.antiAlias,
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (photoUrl.isNotEmpty)
             SizedBox(
@@ -1846,22 +1384,13 @@ class _SelectDestinationScreenState
               child: Image.network(
                 photoUrl,
                 fit: BoxFit.cover,
-                errorBuilder:
-                    (_, __, ___) =>
-                    _buildPhotoPlaceholder(),
-                loadingBuilder:
-                    (
-                    context,
-                    child,
-                    progress,
-                    ) {
-                  if (progress ==
-                      null) {
+                errorBuilder: (_, __, ___) => _buildPhotoPlaceholder(),
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) {
                     return child;
                   }
 
-                  return
-                    _buildPhotoLoading();
+                  return _buildPhotoLoading();
                 },
               ),
             )
@@ -1869,135 +1398,77 @@ class _SelectDestinationScreenState
             _buildPhotoPlaceholder(),
 
           Padding(
-            padding:
-            const EdgeInsets.all(
-              13,
-            ),
+            padding: const EdgeInsets.all(13),
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
                     Expanded(
                       child: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
                             'YOUR DESTINATION',
-                            style:
-                            TextStyle(
-                              color:
-                              Color(
-                                0xFF1677FF,
-                              ),
-                              fontSize:
-                              9,
-                              fontWeight:
-                              FontWeight
-                                  .w900,
-                              letterSpacing:
-                              0.7,
+                            style: TextStyle(
+                              color: Color(0xFF1677FF),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.7,
                             ),
                           ),
-                          const SizedBox(
-                            height: 3,
-                          ),
+                          const SizedBox(height: 3),
                           Text(
                             name,
-                            maxLines:
-                            2,
-                            overflow:
-                            TextOverflow
-                                .ellipsis,
-                            style:
-                            const TextStyle(
-                              color:
-                              Color(
-                                0xFF102A43,
-                              ),
-                              fontSize:
-                              18,
-                              fontWeight:
-                              FontWeight
-                                  .w900,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF102A43),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
-                      tooltip:
-                      'Change destination',
-                      onPressed:
-                      _selectingDestination
+                      tooltip: 'Change destination',
+                      onPressed: _selectingDestination
                           ? null
                           : _clearDestination,
-                      icon:
-                      const Icon(
-                        Icons
-                            .edit_location_alt_rounded,
-                        color:
-                        Color(
-                          0xFF1677FF,
-                        ),
+                      icon: const Icon(
+                        Icons.edit_location_alt_rounded,
+                        color: Color(0xFF1677FF),
                       ),
                     ),
                   ],
                 ),
 
                 if (rating != null) ...[
-                  const SizedBox(
-                    height: 6,
-                  ),
+                  const SizedBox(height: 6),
                   Row(
                     children: [
                       const Icon(
                         Icons.star_rounded,
-                        color:
-                        Color(
-                          0xFFFFB400,
-                        ),
+                        color: Color(0xFFFFB400),
                         size: 18,
                       ),
-                      const SizedBox(
-                        width: 4,
-                      ),
+                      const SizedBox(width: 4),
                       Text(
-                        rating
-                            .toStringAsFixed(
-                          1,
-                        ),
-                        style:
-                        const TextStyle(
-                          color:
-                          Color(
-                            0xFF102A43,
-                          ),
-                          fontSize:
-                          12,
-                          fontWeight:
-                          FontWeight
-                              .w800,
+                        rating.toStringAsFixed(1),
+                        style: const TextStyle(
+                          color: Color(0xFF102A43),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                      if (reviewCount !=
-                          null) ...[
-                        const SizedBox(
-                          width: 5,
-                        ),
+                      if (reviewCount != null) ...[
+                        const SizedBox(width: 5),
                         Text(
                           '($reviewCount reviews)',
-                          style:
-                          const TextStyle(
-                            color:
-                            Color(
-                              0xFF627D98,
-                            ),
-                            fontSize:
-                            11,
+                          style: const TextStyle(
+                            color: Color(0xFF627D98),
+                            fontSize: 11,
                           ),
                         ),
                       ],
@@ -2006,44 +1477,25 @@ class _SelectDestinationScreenState
                 ],
 
                 if (address.isNotEmpty) ...[
-                  const SizedBox(
-                    height: 7,
-                  ),
+                  const SizedBox(height: 7),
                   Row(
-                    crossAxisAlignment:
-                    CrossAxisAlignment
-                        .start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Icon(
-                        Icons
-                            .location_on_outlined,
-                        color:
-                        Color(
-                          0xFF627D98,
-                        ),
+                        Icons.location_on_outlined,
+                        color: Color(0xFF627D98),
                         size: 17,
                       ),
-                      const SizedBox(
-                        width: 5,
-                      ),
+                      const SizedBox(width: 5),
                       Expanded(
                         child: Text(
                           address,
-                          maxLines:
-                          2,
-                          overflow:
-                          TextOverflow
-                              .ellipsis,
-                          style:
-                          const TextStyle(
-                            color:
-                            Color(
-                              0xFF627D98,
-                            ),
-                            fontSize:
-                            11,
-                            height:
-                            1.3,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF627D98),
+                            fontSize: 11,
+                            height: 1.3,
                           ),
                         ),
                       ),
@@ -2062,13 +1514,11 @@ class _SelectDestinationScreenState
     return Container(
       height: 130,
       width: double.infinity,
-      color:
-      const Color(0xFFDFF4FF),
+      color: const Color(0xFFDFF4FF),
       child: const Center(
         child: Icon(
           Icons.landscape_rounded,
-          color:
-          Color(0xFF1677FF),
+          color: Color(0xFF1677FF),
           size: 52,
         ),
       ),
@@ -2079,14 +1529,9 @@ class _SelectDestinationScreenState
     return Container(
       height: 150,
       width: double.infinity,
-      color:
-      const Color(0xFFDFF4FF),
+      color: const Color(0xFFDFF4FF),
       child: const Center(
-        child:
-        CircularProgressIndicator(
-          color:
-          Color(0xFF1677FF),
-        ),
+        child: CircularProgressIndicator(color: Color(0xFF1677FF)),
       ),
     );
   }
@@ -2098,41 +1543,26 @@ class _SelectDestinationScreenState
   Widget _buildNearbyPlaces() {
     if (_loadingNearby) {
       return Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
             'Nearby places you may like',
-            style:
-            TextStyle(
-              color:
-              Color(0xFF102A43),
+            style: TextStyle(
+              color: Color(0xFF102A43),
               fontSize: 16,
-              fontWeight:
-              FontWeight.w900,
+              fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(
-            height: 4,
-          ),
+          const SizedBox(height: 4),
           const Text(
             'Finding interesting places around your destination...',
-            style:
-            TextStyle(
-              color:
-              Color(0xFF627D98),
-              fontSize: 12,
-            ),
+            style: TextStyle(color: Color(0xFF627D98), fontSize: 12),
           ),
-          const SizedBox(
-            height: 14,
-          ),
+          const SizedBox(height: 14),
           const Center(
-            child:
-            CircularProgressIndicator(
+            child: CircularProgressIndicator(
               strokeWidth: 2.5,
-              color:
-              Color(0xFF1677FF),
+              color: Color(0xFF1677FF),
             ),
           ),
         ],
@@ -2142,94 +1572,79 @@ class _SelectDestinationScreenState
     if (_nearbyPlaces.isEmpty) {
       return Container(
         width: double.infinity,
-        padding:
-        const EdgeInsets.all(14),
-        decoration:
-        BoxDecoration(
-          color:
-          const Color(0xFFF7FAFC),
-          borderRadius:
-          BorderRadius.circular(
-            15,
-          ),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7FAFC),
+          borderRadius: BorderRadius.circular(15),
         ),
-        child: const Row(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
-              Icons
-                  .travel_explore_rounded,
-              color:
-              Color(0xFF1677FF),
+              _nearbyPlacesError == null
+                  ? Icons.travel_explore_rounded
+                  : Icons.warning_amber_rounded,
+              color: _nearbyPlacesError == null
+                  ? const Color(0xFF1677FF)
+                  : const Color(0xFFE07817),
             ),
-            SizedBox(
-              width: 10,
-            ),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'No nearby suggestions found. You can continue and choose places later.',
-                style:
-                TextStyle(
-                  color:
-                  Color(0xFF627D98),
-                  fontSize: 12,
-                ),
+                _nearbyPlacesError ??
+                    'No nearby suggestions found. You can continue and choose places later.',
+                style: const TextStyle(color: Color(0xFF627D98), fontSize: 12),
               ),
             ),
+            if (_nearbyPlacesError != null)
+              TextButton(
+                onPressed: () {
+                  final destination = _selectedDestination;
+                  final latitude = (destination?['latitude'] as num?)
+                      ?.toDouble();
+                  final longitude = (destination?['longitude'] as num?)
+                      ?.toDouble();
+                  if (latitude != null && longitude != null) {
+                    _loadNearbyPlaces(latitude, longitude);
+                  }
+                },
+                child: const Text('Retry'),
+              ),
           ],
         ),
       );
     }
 
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
           'Nearby places you may like',
-          style:
-          TextStyle(
-            color:
-            Color(0xFF102A43),
+          style: TextStyle(
+            color: Color(0xFF102A43),
             fontSize: 16,
-            fontWeight:
-            FontWeight.w900,
+            fontWeight: FontWeight.w900,
           ),
         ),
-        const SizedBox(
-          height: 4,
-        ),
+        const SizedBox(height: 4),
         const Text(
           'Add places you want to visit. They will be used later for your route and itinerary.',
-          style:
-          TextStyle(
-            color:
-            Color(0xFF627D98),
+          style: TextStyle(
+            color: Color(0xFF627D98),
             fontSize: 11,
             height: 1.35,
           ),
         ),
-        const SizedBox(
-          height: 12,
-        ),
+        const SizedBox(height: 12),
         SizedBox(
           height: 190,
           child: ListView.separated(
-            scrollDirection:
-            Axis.horizontal,
-            physics:
-            const BouncingScrollPhysics(),
-            itemCount:
-            _nearbyPlaces.length,
-            separatorBuilder:
-                (_, __) =>
-            const SizedBox(
-              width: 11,
-            ),
-            itemBuilder:
-                (context, index) {
-              return _buildNearbyPlaceCard(
-                _nearbyPlaces[index],
-              );
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: _nearbyPlaces.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 11),
+            itemBuilder: (context, index) {
+              return _buildNearbyPlaceCard(_nearbyPlaces[index]);
             },
           ),
         ),
@@ -2237,74 +1652,42 @@ class _SelectDestinationScreenState
     );
   }
 
-  Widget _buildNearbyPlaceCard(
-      Map<String, dynamic> place,
-      ) {
+  Widget _buildNearbyPlaceCard(Map<String, dynamic> place) {
     final placeId =
-        place['placeId']?.toString() ??
-            place['id']?.toString() ??
-            '';
+        place['placeId']?.toString() ?? place['id']?.toString() ?? '';
 
-    final name =
-    _readPlaceName(place);
+    final name = _readPlaceName(place);
 
-    final address =
-    _readAddress(place);
+    final address = _readAddress(place);
 
-    final rating =
-    _readRating(place);
+    final rating = _readRating(place);
 
-    final reviewCount =
-    _readReviewCount(place);
+    final reviewCount = _readReviewCount(place);
 
-    final isAdding =
-    _addingNearbyPlaces.contains(
-      placeId,
-    );
+    final isAdding = _addingNearbyPlaces.contains(placeId);
 
     return Container(
       width: 220,
-      decoration:
-      BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius:
-        BorderRadius.circular(
-          17,
-        ),
-        border: Border.all(
-          color:
-          const Color(0xFFE1EAF2),
-        ),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFE1EAF2)),
         boxShadow: const [
-          BoxShadow(
-            color:
-            Colors.black12,
-            blurRadius: 8,
-            offset:
-            Offset(0, 3),
-          ),
+          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3)),
         ],
       ),
-      clipBehavior:
-      Clip.antiAlias,
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             height: 78,
             width: double.infinity,
-            decoration:
-            const BoxDecoration(
-              color:
-              Color(0xFFDFF4FF),
-            ),
+            decoration: const BoxDecoration(color: Color(0xFFDFF4FF)),
             child: const Center(
               child: Icon(
-                Icons
-                    .photo_camera_back_rounded,
-                color:
-                Color(0xFF1677FF),
+                Icons.photo_camera_back_rounded,
+                color: Color(0xFF1677FF),
                 size: 30,
               ),
             ),
@@ -2312,82 +1695,46 @@ class _SelectDestinationScreenState
 
           Expanded(
             child: Padding(
-              padding:
-              const EdgeInsets.all(
-                10,
-              ),
+              padding: const EdgeInsets.all(10),
               child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment
-                    .start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     name,
                     maxLines: 1,
-                    overflow:
-                    TextOverflow
-                        .ellipsis,
-                    style:
-                    const TextStyle(
-                      color:
-                      Color(
-                        0xFF102A43,
-                      ),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF102A43),
                       fontSize: 13,
-                      fontWeight:
-                      FontWeight.w900,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
 
-                  const SizedBox(
-                    height: 3,
-                  ),
+                  const SizedBox(height: 3),
 
                   if (rating != null)
                     Row(
                       children: [
                         const Icon(
-                          Icons
-                              .star_rounded,
-                          color:
-                          Color(
-                            0xFFFFB400,
-                          ),
+                          Icons.star_rounded,
+                          color: Color(0xFFFFB400),
                           size: 14,
                         ),
-                        const SizedBox(
-                          width: 3,
-                        ),
+                        const SizedBox(width: 3),
                         Text(
-                          rating
-                              .toStringAsFixed(
-                            1,
-                          ),
-                          style:
-                          const TextStyle(
-                            color:
-                            Color(
-                              0xFF486581,
-                            ),
-                            fontSize:
-                            10,
-                            fontWeight:
-                            FontWeight
-                                .w700,
+                          rating.toStringAsFixed(1),
+                          style: const TextStyle(
+                            color: Color(0xFF486581),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        if (reviewCount !=
-                            null)
+                        if (reviewCount != null)
                           Text(
                             ' • $reviewCount',
-                            style:
-                            const TextStyle(
-                              color:
-                              Color(
-                                0xFF829AB1,
-                              ),
-                              fontSize:
-                              9,
+                            style: const TextStyle(
+                              color: Color(0xFF829AB1),
+                              fontSize: 9,
                             ),
                           ),
                       ],
@@ -2395,25 +1742,14 @@ class _SelectDestinationScreenState
 
                   if (address.isNotEmpty)
                     Padding(
-                      padding:
-                      const EdgeInsets
-                          .only(
-                        top: 3,
-                      ),
+                      padding: const EdgeInsets.only(top: 3),
                       child: Text(
                         address,
                         maxLines: 1,
-                        overflow:
-                        TextOverflow
-                            .ellipsis,
-                        style:
-                        const TextStyle(
-                          color:
-                          Color(
-                            0xFF829AB1,
-                          ),
-                          fontSize:
-                          9,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF829AB1),
+                          fontSize: 9,
                         ),
                       ),
                     ),
@@ -2421,65 +1757,36 @@ class _SelectDestinationScreenState
                   const Spacer(),
 
                   SizedBox(
-                    width:
-                    double.infinity,
+                    width: double.infinity,
                     height: 32,
-                    child:
-                    FilledButton(
-                      onPressed:
-                      placeId.isEmpty ||
-                          isAdding
+                    child: FilledButton(
+                      onPressed: placeId.isEmpty || isAdding
                           ? null
-                          : () =>
-                          _addNearbyPlace(
-                            place,
-                          ),
-                      style:
-                      FilledButton
-                          .styleFrom(
-                        backgroundColor:
-                        const Color(
-                          0xFF1677FF,
-                        ),
-                        disabledBackgroundColor:
-                        const Color(
-                          0xFFB7C9DB,
-                        ),
-                        padding:
-                        EdgeInsets
-                            .zero,
-                        shape:
-                        RoundedRectangleBorder(
-                          borderRadius:
-                          BorderRadius
-                              .circular(
-                            9,
-                          ),
+                          : () => _addNearbyPlace(place),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF1677FF),
+                        disabledBackgroundColor: const Color(0xFFB7C9DB),
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9),
                         ),
                       ),
                       child: isAdding
                           ? const SizedBox(
-                        width: 15,
-                        height: 15,
-                        child:
-                        CircularProgressIndicator(
-                          strokeWidth:
-                          2,
-                          color:
-                          Colors.white,
-                        ),
-                      )
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
                           : const Text(
-                        'Add to my places',
-                        style:
-                        TextStyle(
-                          fontSize:
-                          10,
-                          fontWeight:
-                          FontWeight
-                              .w800,
-                        ),
-                      ),
+                              'Add to my places',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                     ),
                   ),
                 ],
@@ -2501,64 +1808,36 @@ class _SelectDestinationScreenState
       height: 52,
       child: FilledButton(
         onPressed:
-        _saving ||
-            _selectingDestination ||
-            _selectedDestination ==
-                null
+            _saving || _selectingDestination || _selectedDestination == null
             ? null
             : _continue,
-        style:
-        FilledButton.styleFrom(
-          backgroundColor:
-          const Color(
-            0xFF1677FF,
-          ),
-          disabledBackgroundColor:
-          const Color(
-            0xFFB7C9DB,
-          ),
-          shape:
-          RoundedRectangleBorder(
-            borderRadius:
-            BorderRadius.circular(
-              15,
-            ),
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF1677FF),
+          disabledBackgroundColor: const Color(0xFFB7C9DB),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
           ),
         ),
         child: _saving
             ? const SizedBox(
-          width: 22,
-          height: 22,
-          child:
-          CircularProgressIndicator(
-            strokeWidth: 2.5,
-            color:
-            Colors.white,
-          ),
-        )
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Colors.white,
+                ),
+              )
             : const Row(
-          mainAxisAlignment:
-          MainAxisAlignment
-              .center,
-          children: [
-            Text(
-              'Continue to Preferences',
-              style:
-              TextStyle(
-                fontSize: 15,
-                fontWeight:
-                FontWeight.w800,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Continue to Preferences',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                  SizedBox(width: 8),
+                  Icon(Icons.arrow_forward_rounded),
+                ],
               ),
-            ),
-            SizedBox(
-              width: 8,
-            ),
-            Icon(
-              Icons
-                  .arrow_forward_rounded,
-            ),
-          ],
-        ),
       ),
     );
   }

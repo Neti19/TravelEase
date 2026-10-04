@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -311,12 +312,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   _openMyTrips,
                 ),
                 const SizedBox(width: 12),
+                const DashboardNavigationButton(),
                 _authButton(),
-              ] else
+              ] else ...[
+                const DashboardNavigationButton(),
                 IconButton(
                   onPressed: _showMobileMenu,
                   icon: const Icon(Icons.menu_rounded),
                 ),
+              ],
             ],
           ),
         ),
@@ -471,6 +475,22 @@ class _HomeScreenState extends State<HomeScreen> {
                     _openMyTrips();
                   },
                 ),
+                if (_isLoggedIn)
+                  ListTile(
+                    leading: const Icon(
+                      Icons.home_rounded,
+                      color: Color(0xFF1677FF),
+                    ),
+                    title: const Text('Personal dashboard'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      Navigator.pushNamedAndRemoveUntil(
+                        context,
+                        AppRoutes.dashboard,
+                        (_) => false,
+                      );
+                    },
+                  ),
                 ListTile(
                   leading: Icon(
                     _isLoggedIn

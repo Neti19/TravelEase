@@ -3,22 +3,18 @@ import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
 import '../../models/itinerary.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class DayWiseItineraryScreen extends StatefulWidget {
   final String tripId;
 
-  const DayWiseItineraryScreen({
-    super.key,
-    required this.tripId,
-  });
+  const DayWiseItineraryScreen({super.key, required this.tripId});
 
   @override
-  State<DayWiseItineraryScreen> createState() =>
-      _DayWiseItineraryScreenState();
+  State<DayWiseItineraryScreen> createState() => _DayWiseItineraryScreenState();
 }
 
-class _DayWiseItineraryScreenState
-    extends State<DayWiseItineraryScreen> {
+class _DayWiseItineraryScreenState extends State<DayWiseItineraryScreen> {
   FullItinerary? _itinerary;
 
   bool _loading = true;
@@ -47,9 +43,7 @@ class _DayWiseItineraryScreenState
       final itineraryData = data['itinerary'];
 
       if (itineraryData is! Map) {
-        throw Exception(
-          'Itinerary has not been generated yet.',
-        );
+        throw Exception('Itinerary has not been generated yet.');
       }
 
       final itinerary = FullItinerary.fromJson(
@@ -190,9 +184,7 @@ class _DayWiseItineraryScreenState
 
         const SizedBox(height: 12),
 
-        ...activities.map(
-              (activity) => _buildActivityCard(activity),
-        ),
+        ...activities.map((activity) => _buildActivityCard(activity)),
 
         const SizedBox(height: 12),
       ],
@@ -207,9 +199,7 @@ class _DayWiseItineraryScreenState
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFE7EAF0),
-        ),
+        border: Border.all(color: const Color(0xFFE7EAF0)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -260,7 +250,7 @@ class _DayWiseItineraryScreenState
                       Expanded(
                         child: Text(
                           '${_formatTime(activity.startTime)} - '
-                              '${_formatTime(activity.endTime)}',
+                          '${_formatTime(activity.endTime)}',
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -332,17 +322,14 @@ class _DayWiseItineraryScreenState
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Your Trip Plan'),
+          actions: const [DashboardNavigationButton()],
         ),
         body: Center(
           child: Padding(
@@ -350,17 +337,11 @@ class _DayWiseItineraryScreenState
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.error_outline,
-                  size: 60,
-                ),
+                const Icon(Icons.error_outline, size: 60),
 
                 const SizedBox(height: 16),
 
-                Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                ),
+                Text(_error!, textAlign: TextAlign.center),
 
                 const SizedBox(height: 20),
 
@@ -388,12 +369,9 @@ class _DayWiseItineraryScreenState
       return Scaffold(
         appBar: AppBar(
           title: const Text('Your Trip Plan'),
+          actions: const [DashboardNavigationButton()],
         ),
-        body: const Center(
-          child: Text(
-            'No itinerary days are available.',
-          ),
-        ),
+        body: const Center(child: Text('No itinerary days are available.')),
       );
     }
 
@@ -409,60 +387,22 @@ class _DayWiseItineraryScreenState
 
           title: const Text(
             'Your Trip Plan',
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(fontWeight: FontWeight.w700),
           ),
 
-          actions: [
-            IconButton(
-              icon: const Icon(
-                Icons.home_rounded,
-              ),
-              tooltip: 'Home',
-              onPressed: () {
-                Navigator.pushNamedAndRemoveUntil(
-                  context,
-                  AppRoutes.home,
-                  (route) => false,
-                );
-              },
-            ),
-
-            IconButton(
-              icon: const Icon(
-                Icons.edit_calendar,
-              ),
-              tooltip: 'Customize',
-              onPressed: () {
-                Navigator.pushNamed(
-                  context,
-                  AppRoutes.customizeItinerary,
-                  arguments: {
-                    'tripId': widget.tripId,
-                  },
-                );
-              },
-            ),
-          ],
+          actions: const [DashboardNavigationButton()],
 
           bottom: TabBar(
             isScrollable: itinerary.days.length > 4,
             tabs: itinerary.days
-                .map(
-                  (day) => Tab(
-                text: 'Day ${day.dayNumber}',
-              ),
-            )
+                .map((day) => Tab(text: 'Day ${day.dayNumber}'))
                 .toList(),
           ),
         ),
 
         body: TabBarView(
           children: itinerary.days
-              .map(
-                (day) => _buildDaySchedule(day),
-          )
+              .map((day) => _buildDaySchedule(day))
               .toList(),
         ),
 
@@ -480,17 +420,11 @@ class _DayWiseItineraryScreenState
                       Navigator.pushNamed(
                         context,
                         AppRoutes.expenseTracker,
-                        arguments: {
-                          'tripId': widget.tripId,
-                        },
+                        arguments: {'tripId': widget.tripId},
                       );
                     },
-                    icon: const Icon(
-                      Icons.account_balance_wallet,
-                    ),
-                    label: const Text(
-                      'Track Trip Expenses',
-                    ),
+                    icon: const Icon(Icons.account_balance_wallet),
+                    label: const Text('Track Trip Expenses'),
                   ),
                 ),
 
@@ -503,17 +437,11 @@ class _DayWiseItineraryScreenState
                       Navigator.pushNamed(
                         context,
                         AppRoutes.mapNavigation,
-                        arguments: {
-                          'tripId': widget.tripId,
-                        },
+                        arguments: {'tripId': widget.tripId},
                       );
                     },
-                    icon: const Icon(
-                      Icons.map,
-                    ),
-                    label: const Text(
-                      'Open Route Map',
-                    ),
+                    icon: const Icon(Icons.map),
+                    label: const Text('Open Route Map'),
                   ),
                 ),
               ],
@@ -526,24 +454,15 @@ class _DayWiseItineraryScreenState
 
   Widget _buildDaySchedule(DayItinerary day) {
     final morningActivities = day.activities
-        .where(
-          (activity) =>
-      _timePeriod(activity.startTime) == 'Morning',
-    )
+        .where((activity) => _timePeriod(activity.startTime) == 'Morning')
         .toList();
 
     final afternoonActivities = day.activities
-        .where(
-          (activity) =>
-      _timePeriod(activity.startTime) == 'Afternoon',
-    )
+        .where((activity) => _timePeriod(activity.startTime) == 'Afternoon')
         .toList();
 
     final eveningActivities = day.activities
-        .where(
-          (activity) =>
-      _timePeriod(activity.startTime) == 'Evening',
-    )
+        .where((activity) => _timePeriod(activity.startTime) == 'Evening')
         .toList();
 
     return Column(
@@ -551,12 +470,7 @@ class _DayWiseItineraryScreenState
         Container(
           width: double.infinity,
           color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            16,
-            20,
-            16,
-          ),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
           child: Row(
             children: [
               Container(
@@ -590,8 +504,8 @@ class _DayWiseItineraryScreenState
 
                   Text(
                     '${day.date.day}/'
-                        '${day.date.month}/'
-                        '${day.date.year}',
+                    '${day.date.month}/'
+                    '${day.date.year}',
                     style: const TextStyle(
                       fontSize: 13,
                       color: Color(0xFF687386),
@@ -606,34 +520,27 @@ class _DayWiseItineraryScreenState
         Expanded(
           child: day.activities.isEmpty
               ? const Center(
-            child: Text(
-              'No activities scheduled for this day.',
-            ),
-          )
+                  child: Text('No activities scheduled for this day.'),
+                )
               : ListView(
-            padding: const EdgeInsets.fromLTRB(
-              16,
-              16,
-              16,
-              24,
-            ),
-            children: [
-              _buildPeriodSection(
-                period: 'Morning',
-                activities: morningActivities,
-              ),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  children: [
+                    _buildPeriodSection(
+                      period: 'Morning',
+                      activities: morningActivities,
+                    ),
 
-              _buildPeriodSection(
-                period: 'Afternoon',
-                activities: afternoonActivities,
-              ),
+                    _buildPeriodSection(
+                      period: 'Afternoon',
+                      activities: afternoonActivities,
+                    ),
 
-              _buildPeriodSection(
-                period: 'Evening',
-                activities: eveningActivities,
-              ),
-            ],
-          ),
+                    _buildPeriodSection(
+                      period: 'Evening',
+                      activities: eveningActivities,
+                    ),
+                  ],
+                ),
         ),
       ],
     );

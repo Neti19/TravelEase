@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/trip.dart';
 import 'itinerary_generator_service.dart';
-import 'route_service.dart';
+import 'trip_destination_service.dart';
 import 'trip_service.dart';
 import 'destination_recommendation_service.dart';
 
@@ -15,8 +15,8 @@ import 'destination_recommendation_service.dart';
 ///
 /// The user does not need to fill the normal trip setup screens. The selected
 /// recommendation becomes the trip's starting point, nearby attractions are
-/// discovered from Google Places, Google Routes orders them, and the existing
-/// itinerary generator creates the day-wise plan.
+/// discovered from Google Places, and the existing itinerary generator creates
+/// the day-wise plan from those saved places.
 class HelpMeChooseTripService {
   static const String _placesEndpoint =
       'https://places.googleapis.com/v1/places:searchText';
@@ -24,9 +24,9 @@ class HelpMeChooseTripService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TripService _tripService = TripService();
-  final RouteService _routeService = RouteService();
+  final TripDestinationService _destinationService = TripDestinationService();
   final ItineraryGeneratorService _itineraryGenerator =
-  ItineraryGeneratorService();
+      ItineraryGeneratorService();
 
   Future<String> createTripAndGenerateItinerary({
     required RecommendedDestination destination,
@@ -44,9 +44,19 @@ class HelpMeChooseTripService {
     final numberOfDays = _numberOfDays(duration);
     final travelers = _travelerCount(travelerType);
     final startDate = _nextStartDate();
-    final endDate = startDate.add(
-      Duration(days: numberOfDays - 1),
+    final endDate = startDate.add(Duration(days: numberOfDays - 1));
+
+    final attractions = await _findNearbyAttractions(
+      destination: destination,
+      experience: experience,
     );
+
+    if (attractions.isEmpty) {
+      throw Exception(
+        'No suitable nearby attractions were found for this destination. '
+        'Please choose another recommendation.',
+      );
+    }
 
     final trip = Trip(
       id: '',
@@ -60,98 +70,41 @@ class HelpMeChooseTripService {
       numberOfDays: numberOfDays,
       travelersCount: travelers,
       budget: budget,
-      selectedPreferenceIds: [
-        experience,
-        travelerType,
-        duration,
-      ],
+      selectedPreferenceIds: [experience, travelerType, duration],
     );
 
     final tripId = await _tripService.saveTrip(trip);
 
     try {
-      final attractions = await _findNearbyAttractions(
-        destination: destination,
-        experience: experience,
-      );
-
-      if (attractions.isEmpty) {
-        throw Exception(
-          'No suitable nearby attractions were found for this destination. '
-              'Please choose another recommendation.',
+      for (final attraction in attractions) {
+        await _destinationService.saveSelectedPlace(
+          tripId: tripId,
+          placeId: attraction.id,
+          name: attraction.name,
+          address: attraction.address,
+          latitude: attraction.latitude,
+          longitude: attraction.longitude,
+          category: attraction.primaryType,
         );
       }
 
-      final stops = attractions
-          .map(_toRoutePoint)
-          .toList();
-
-      final origin = RoutePoint(
-        id: destination.id,
-        name: destination.name,
-        latitude: destination.latitude,
-        longitude: destination.longitude,
-        type: 'destination',
-      );
-
-      final route = await _routeService.calculateRoute(
-        origin: origin,
-        stops: stops,
-      );
-
-      if (route.orderedPoints.length < 2) {
-        throw Exception(
-          'Could not create a usable route for this destination.',
-        );
-      }
-
-      await _firestore
-          .collection('trips')
-          .doc(tripId)
-          .set(
-        {
-          'route': {
-            'distanceMeters': route.distanceMeters,
-            'duration': route.duration,
-            'optimized': true,
-            'orderedStops': route.orderedPoints
-                .map((point) => point.toMap())
-                .toList(),
-            'polylinePoints': route.polylinePoints
-                .map(
-                  (point) => {
-                'latitude': point.latitude,
-                'longitude': point.longitude,
-              },
-            )
-                .toList(),
-            'generatedAt': FieldValue.serverTimestamp(),
-          },
-          'planningMode': 'help_me_choose',
-          'experience': experience,
-          'travelerType': travelerType,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+      await _firestore.collection('trips').doc(tripId).set({
+        'planningMode': 'help_me_choose',
+        'experience': experience,
+        'travelerType': travelerType,
+        'planningError': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
       await _itineraryGenerator.generateForTrip(tripId);
 
       return tripId;
     } catch (e) {
-      // Keep the created trip because it is useful for debugging/recovery,
-      // but mark the automatic planning attempt as failed.
-      await _firestore
-          .collection('trips')
-          .doc(tripId)
-          .set(
-        {
-          'planningMode': 'help_me_choose',
-          'planningError': e.toString(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+      await _firestore.collection('trips').doc(tripId).set({
+        'planningMode': 'help_me_choose',
+        'planningError': e.toString(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
       rethrow;
     }
@@ -164,9 +117,7 @@ class HelpMeChooseTripService {
     final apiKey = dotenv.env['PLACES_API_KEY'];
 
     if (apiKey == null || apiKey.trim().isEmpty) {
-      throw Exception(
-        'PLACES_API_KEY is missing from the .env file.',
-      );
+      throw Exception('PLACES_API_KEY is missing from the .env file.');
     }
 
     final queries = _attractionQueries(experience);
@@ -247,7 +198,7 @@ class HelpMeChooseTripService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'Google Places API error '
-            '(${response.statusCode}): ${response.body}',
+        '(${response.statusCode}): ${response.body}',
       );
     }
 
@@ -265,16 +216,12 @@ class HelpMeChooseTripService {
 
     return places
         .whereType<Map>()
-        .map((place) => _readNearbyPlace(
-      Map<String, dynamic>.from(place),
-    ))
+        .map((place) => _readNearbyPlace(Map<String, dynamic>.from(place)))
         .whereType<_NearbyPlace>()
         .toList();
   }
 
-  _NearbyPlace? _readNearbyPlace(
-      Map<String, dynamic> place,
-      ) {
+  _NearbyPlace? _readNearbyPlace(Map<String, dynamic> place) {
     final id = place['id']?.toString();
     final displayName = place['displayName'];
     final location = place['location'];
@@ -303,9 +250,7 @@ class HelpMeChooseTripService {
     }
 
     final types = place['types'] is List
-        ? List<String>.from(
-      (place['types'] as List).whereType<String>(),
-    )
+        ? List<String>.from((place['types'] as List).whereType<String>())
         : <String>[];
 
     return _NearbyPlace(
@@ -321,17 +266,15 @@ class HelpMeChooseTripService {
     );
   }
 
-  RoutePoint _toRoutePoint(_NearbyPlace place) {
-    return RoutePoint(
-      id: place.id,
-      name: place.name,
-      latitude: place.latitude,
-      longitude: place.longitude,
-      type: 'tourist_spot',
-    );
+  List<String> _attractionQueries(String experience) {
+    return experience
+        .split(',')
+        .expand((item) => _singleExperienceAttractionQueries(item.trim()))
+        .toSet()
+        .toList();
   }
 
-  List<String> _attractionQueries(String experience) {
+  List<String> _singleExperienceAttractionQueries(String experience) {
     switch (experience.toLowerCase()) {
       case 'beach':
         return [
@@ -424,11 +367,7 @@ class HelpMeChooseTripService {
     final now = DateTime.now();
     final candidate = now.add(const Duration(days: 7));
 
-    return DateTime(
-      candidate.year,
-      candidate.month,
-      candidate.day,
-    );
+    return DateTime(candidate.year, candidate.month, candidate.day);
   }
 
   double _toDouble(dynamic value) {

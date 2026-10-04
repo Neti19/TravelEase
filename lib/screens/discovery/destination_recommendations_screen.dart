@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app_routes.dart';
 import '../../services/destination_recommendation_service.dart';
 import '../../services/help_me_choose_trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class DestinationRecommendationsScreen extends StatefulWidget {
   final String experience;
@@ -126,25 +127,35 @@ class _DestinationRecommendationsScreenState
     return Scaffold(
       backgroundColor: const Color(0xFFF7FAFC),
       body: SafeArea(
-        child: FutureBuilder<List<RecommendedDestination>>(
-          future: _recommendationsFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return _buildLoading();
-            }
+        child: Column(
+          children: [
+            const Align(
+              alignment: Alignment.centerRight,
+              child: DashboardNavigationButton(),
+            ),
+            Expanded(
+              child: FutureBuilder<List<RecommendedDestination>>(
+                future: _recommendationsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return _buildLoading();
+                  }
 
-            if (snapshot.hasError) {
-              return _buildError(snapshot.error);
-            }
+                  if (snapshot.hasError) {
+                    return _buildError(snapshot.error);
+                  }
 
-            final destinations = snapshot.data ?? [];
+                  final destinations = snapshot.data ?? [];
 
-            if (destinations.isEmpty) {
-              return _buildEmpty();
-            }
+                  if (destinations.isEmpty) {
+                    return _buildEmpty();
+                  }
 
-            return _buildResults(destinations);
-          },
+                  return _buildResults(destinations);
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -1,17 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import '../../services/places_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class StartingLocationPickerScreen extends StatefulWidget {
   final String? tripId;
 
-  const StartingLocationPickerScreen({
-    super.key,
-    this.tripId,
-  });
+  const StartingLocationPickerScreen({super.key, this.tripId});
 
   @override
   State<StartingLocationPickerScreen> createState() =>
@@ -22,14 +22,19 @@ class _StartingLocationPickerScreenState
     extends State<StartingLocationPickerScreen> {
   GoogleMapController? _mapController;
   final PlacesService _placesService = PlacesService();
-  LatLng _selectedLocation =
-  const LatLng(22.6916, 72.8634);
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
+  int _searchRequestId = 0;
+  LatLng _selectedLocation = const LatLng(22.6916, 72.8634);
 
   String _address = 'Getting location...';
 
   bool _loadingCurrentLocation = false;
+  bool _searching = false;
+  bool _selectingSearchResult = false;
 
   Set<Marker> _markers = {};
+  List<Map<String, dynamic>> _suggestions = [];
   String? _tripId;
 
   @override
@@ -39,6 +44,13 @@ class _StartingLocationPickerScreenState
     _tripId = widget.tripId;
 
     _updateMarker(_selectedLocation);
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -56,7 +68,7 @@ class _StartingLocationPickerScreenState
     }
   }
 
-  void _updateMarker(LatLng position) {
+  void _updateMarker(LatLng position, {String? address}) {
     setState(() {
       _selectedLocation = position;
 
@@ -71,10 +83,12 @@ class _StartingLocationPickerScreenState
         ),
       };
 
-      _address = 'Getting location...';
+      _address = address ?? 'Getting location...';
     });
 
-    _getAddress(position);
+    if (address == null) {
+      _getAddress(position);
+    }
   }
 
   Future<void> _selectLocation(LatLng position) async {
@@ -124,14 +138,122 @@ class _StartingLocationPickerScreenState
       });
     }
   }
+
+  Future<void> _searchPlaces(String value) async {
+    _searchDebounce?.cancel();
+    final requestId = ++_searchRequestId;
+    final query = value.trim();
+
+    if (query.length < 2) {
+      if (mounted) {
+        setState(() {
+          _suggestions = [];
+          _searching = false;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _suggestions = [];
+      _searching = true;
+    });
+
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () async {
+      try {
+        final results = await _placesService.autocomplete(query);
+        if (!mounted ||
+            requestId != _searchRequestId ||
+            _searchController.text.trim() != query) {
+          return;
+        }
+        setState(() {
+          _suggestions = results;
+          _searching = false;
+        });
+      } catch (e) {
+        if (!mounted || requestId != _searchRequestId) return;
+        setState(() {
+          _searching = false;
+        });
+        _showMessage('Place search failed: $e');
+      }
+    });
+  }
+
+  Future<void> _selectSearchResult(Map<String, dynamic> suggestion) async {
+    if (_selectingSearchResult) return;
+
+    final placeId = suggestion['placeId']?.toString() ?? '';
+    if (placeId.isEmpty) {
+      _showMessage('This place cannot be selected.');
+      return;
+    }
+
+    setState(() {
+      _selectingSearchResult = true;
+      _suggestions = [];
+      _searching = false;
+    });
+
+    try {
+      final details = await _placesService.getPlaceDetails(placeId);
+      final location = details['location'] as Map<String, dynamic>?;
+      final latitude = (location?['latitude'] as num?)?.toDouble();
+      final longitude = (location?['longitude'] as num?)?.toDouble();
+
+      if (latitude == null || longitude == null) {
+        _showMessage('This place does not have a valid map location.');
+        return;
+      }
+
+      final formattedAddress = details['formattedAddress']?.toString().trim();
+      final address = formattedAddress != null && formattedAddress.isNotEmpty
+          ? formattedAddress
+          : suggestion['description']?.toString().trim();
+
+      _updateMarker(
+        LatLng(latitude, longitude),
+        address: address == null || address.isEmpty
+            ? suggestion['mainText']?.toString() ?? 'Selected location'
+            : address,
+      );
+      _searchController.clear();
+      await _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(latitude, longitude), 15),
+      );
+    } catch (e) {
+      if (mounted) {
+        _showMessage('Could not select this place: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _selectingSearchResult = false;
+        });
+      }
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message.replaceFirst('Exception: ', '')),
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
+  }
+
   Future<void> _useCurrentLocation() async {
     setState(() {
       _loadingCurrentLocation = true;
     });
 
     try {
-      bool serviceEnabled =
-      await Geolocator.isLocationServiceEnabled();
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
       if (!serviceEnabled) {
         if (mounted) {
@@ -144,8 +266,7 @@ class _StartingLocationPickerScreenState
               ),
               actions: [
                 TextButton(
-                  onPressed: () =>
-                      Navigator.pop(context),
+                  onPressed: () => Navigator.pop(context),
                   child: const Text('OK'),
                 ),
               ],
@@ -156,61 +277,42 @@ class _StartingLocationPickerScreenState
         return;
       }
 
-      LocationPermission permission =
-      await Geolocator.checkPermission();
+      LocationPermission permission = await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
-        permission =
-        await Geolocator.requestPermission();
+        permission = await Geolocator.requestPermission();
       }
 
       if (permission == LocationPermission.denied) {
-        throw Exception(
-          'Location permission denied.',
-        );
+        throw Exception('Location permission denied.');
       }
 
-      if (permission ==
-          LocationPermission.deniedForever) {
+      if (permission == LocationPermission.deniedForever) {
         throw Exception(
           'Location permission permanently denied. '
-              'Please enable it from device settings.',
+          'Please enable it from device settings.',
         );
       }
 
-      final position =
-      await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
       );
 
-      final currentLocation = LatLng(
-        position.latitude,
-        position.longitude,
-      );
+      final currentLocation = LatLng(position.latitude, position.longitude);
 
       _updateMarker(currentLocation);
 
       await _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: currentLocation,
-            zoom: 16,
-          ),
+          CameraPosition(target: currentLocation, zoom: 16),
         ),
       );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.toString().replaceFirst(
-                'Exception: ',
-                '',
-              ),
-            ),
-          ),
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
       }
     } finally {
@@ -227,17 +329,12 @@ class _StartingLocationPickerScreenState
       final address = _address == 'Getting location...'
           ? 'Selected location'
           : _address;
-      Navigator.pop(
-        context,
-        {
-          'tripId': _tripId,
-          'address': address,
-          'latitude':
-          _selectedLocation.latitude,
-          'longitude':
-          _selectedLocation.longitude,
-        },
-      );
+      Navigator.pop(context, {
+        'tripId': _tripId,
+        'address': address,
+        'latitude': _selectedLocation.latitude,
+        'longitude': _selectedLocation.longitude,
+      });
     }
   }
 
@@ -245,9 +342,8 @@ class _StartingLocationPickerScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Select Starting Location',
-        ),
+        title: const Text('Select Starting Location'),
+        actions: const [DashboardNavigationButton()],
       ),
       body: Stack(
         children: [
@@ -272,16 +368,124 @@ class _StartingLocationPickerScreenState
             top: 16,
             left: 16,
             right: 16,
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  _address,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: _searchPlaces,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: 'Search city, place or address',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: _searching || _selectingSearchResult
+                          ? const Padding(
+                              padding: EdgeInsets.all(14),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : _searchController.text.isNotEmpty
+                          ? IconButton(
+                              tooltip: 'Clear search',
+                              onPressed: () {
+                                _searchController.clear();
+                                _searchDebounce?.cancel();
+                                _searchRequestId++;
+                                setState(() {
+                                  _suggestions = [];
+                                  _searching = false;
+                                });
+                              },
+                              icon: const Icon(Icons.close_rounded),
+                            )
+                          : null,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 15,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                if (_suggestions.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    clipBehavior: Clip.antiAlias,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 280),
+                      child: ListView.separated(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: _suggestions.length,
+                        separatorBuilder: (_, _) =>
+                            const Divider(height: 1, indent: 56),
+                        itemBuilder: (context, index) {
+                          final suggestion = _suggestions[index];
+                          final mainText =
+                              suggestion['mainText']?.toString().trim() ?? '';
+                          final secondaryText =
+                              suggestion['secondaryText']?.toString().trim() ??
+                              '';
+                          return ListTile(
+                            leading: const Icon(
+                              Icons.location_on_rounded,
+                              color: Color(0xFF1677FF),
+                            ),
+                            title: Text(
+                              mainText.isEmpty ? 'Location' : mainText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: secondaryText.isEmpty
+                                ? null
+                                : Text(
+                                    secondaryText,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                            onTap: _selectingSearchResult
+                                ? null
+                                : () => _selectSearchResult(suggestion),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.trip_origin_rounded,
+                          color: Color(0xFF1677FF),
+                          size: 18,
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            _address,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
 
@@ -289,21 +493,14 @@ class _StartingLocationPickerScreenState
             right: 16,
             bottom: 100,
             child: FloatingActionButton(
-              onPressed: _loadingCurrentLocation
-                  ? null
-                  : _useCurrentLocation,
+              onPressed: _loadingCurrentLocation ? null : _useCurrentLocation,
               child: _loadingCurrentLocation
                   ? const SizedBox(
-                width: 24,
-                height: 24,
-                child:
-                CircularProgressIndicator(
-                  strokeWidth: 2,
-                ),
-              )
-                  : const Icon(
-                Icons.my_location,
-              ),
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location),
             ),
           ),
 
@@ -315,13 +512,8 @@ class _StartingLocationPickerScreenState
               onPressed: _confirmLocation,
               icon: const Icon(Icons.check),
               label: const Text('Confirm Starting Location'),
-              style:
-              ElevatedButton.styleFrom(
-                minimumSize:
-                const Size(
-                  double.infinity,
-                  52,
-                ),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 52),
               ),
             ),
           ),

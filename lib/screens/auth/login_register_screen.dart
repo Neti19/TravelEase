@@ -21,17 +21,14 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
 
   final AuthService _authService = AuthService();
 
-  final TextEditingController _nameController =
-  TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
 
-  final TextEditingController _emailController =
-  TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
 
-  final TextEditingController _passwordController =
-  TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
 
   final TextEditingController _confirmPasswordController =
-  TextEditingController();
+      TextEditingController();
 
   late final AnimationController _animationController;
   late final Animation<double> _fadeAnimation;
@@ -51,15 +48,13 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
       curve: Curves.easeOut,
     );
 
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.08),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeOutCubic,
-      ),
-    );
+    _slideAnimation =
+        Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: Curves.easeOutCubic,
+          ),
+        );
 
     _animationController.forward();
   }
@@ -97,10 +92,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
       final password = _passwordController.text.trim();
 
       if (_isLogin) {
-        await _authService.login(
-          email,
-          password,
-        );
+        await _authService.login(email, password);
       } else {
         await _authService.register(
           _nameController.text.trim(),
@@ -112,10 +104,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
       if (!mounted) return;
 
       // Logged-in users now go to their personal dashboard.
-      Navigator.pushReplacementNamed(
-        context,
-        AppRoutes.dashboard,
-      );
+      Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
@@ -144,29 +133,22 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
           break;
 
         case 'too-many-requests':
-          message =
-          'Too many attempts. Please try again later.';
+          message = 'Too many attempts. Please try again later.';
           break;
 
         default:
-          message =
-          'Authentication failed. Please try again.';
+          message = 'Authentication failed. Please try again.';
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
     } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Something went wrong. Please try again.',
-          ),
+          content: Text('Something went wrong. Please try again.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -183,9 +165,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Please enter your email address first.',
-          ),
+          content: Text('Please enter your email address first.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -199,9 +179,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Password reset email sent. Please check your inbox.',
-          ),
+          content: Text('Password reset email sent. Please check your inbox.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -220,15 +198,11 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
           break;
 
         default:
-          message =
-          'Could not send password reset email.';
+          message = 'Could not send password reset email.';
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
     }
   }
@@ -270,6 +244,26 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                   ),
                 ),
               ),
+              Positioned(
+                top: 8,
+                right: 12,
+                child: IconButton(
+                  tooltip: 'Home',
+                  onPressed: () {
+                    FocusScope.of(context).unfocus();
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      AppRoutes.home,
+                      (_) => false,
+                    );
+                  },
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF1677FF),
+                  ),
+                  icon: const Icon(Icons.home_rounded),
+                ),
+              ),
             ],
           ),
         ),
@@ -277,25 +271,17 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
     );
   }
 
-  Widget _backgroundCircle({
-    required double size,
-    required Color color,
-  }) {
+  Widget _backgroundCircle({required double size, required Color color}) {
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 
   Widget _buildAuthCard() {
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        maxWidth: 460,
-      ),
+      constraints: const BoxConstraints(maxWidth: 460),
       child: Container(
         padding: const EdgeInsets.all(28),
         decoration: BoxDecoration(
@@ -321,9 +307,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
                 child: Text(
-                  _isLogin
-                      ? 'Welcome back ✈️'
-                      : 'Start your journey 🌎',
+                  _isLogin ? 'Welcome back ✈️' : 'Start your journey 🌎',
                   key: ValueKey(_isLogin),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
@@ -342,9 +326,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                   _isLogin
                       ? 'Your next adventure is waiting.'
                       : 'Create your TravelEase account and start planning.',
-                  key: ValueKey(
-                    '${_isLogin}_subtitle',
-                  ),
+                  key: ValueKey('${_isLogin}_subtitle'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 14,
@@ -364,8 +346,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                   icon: Icons.person_outline_rounded,
                   textInputAction: TextInputAction.next,
                   validator: (value) {
-                    if (value == null ||
-                        value.trim().isEmpty) {
+                    if (value == null || value.trim().isEmpty) {
                       return 'Please enter your name';
                     }
 
@@ -384,14 +365,11 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
                 validator: (value) {
-                  if (value == null ||
-                      value.trim().isEmpty) {
+                  if (value == null || value.trim().isEmpty) {
                     return 'Please enter your email';
                   }
 
-                  if (!RegExp(
-                    r'\S+@\S+\.\S+',
-                  ).hasMatch(value)) {
+                  if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value)) {
                     return 'Please enter a valid email address';
                   }
 
@@ -410,13 +388,11 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                 textInputAction: _isLogin
                     ? TextInputAction.done
                     : TextInputAction.next,
-                onFieldSubmitted:
-                _isLogin ? (_) => _submitForm() : null,
+                onFieldSubmitted: _isLogin ? (_) => _submitForm() : null,
                 suffixIcon: IconButton(
                   onPressed: () {
                     setState(() {
-                      _obscurePassword =
-                      !_obscurePassword;
+                      _obscurePassword = !_obscurePassword;
                     });
                   },
                   icon: Icon(
@@ -454,8 +430,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                       return 'Please confirm your password';
                     }
 
-                    if (value !=
-                        _passwordController.text) {
+                    if (value != _passwordController.text) {
                       return 'Passwords do not match';
                     }
 
@@ -472,9 +447,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                     onPressed: _sendPasswordReset,
                     child: const Text(
                       'Forgot password?',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
@@ -488,14 +461,9 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
 
               Row(
                 children: const [
-                  Expanded(
-                    child: Divider(
-                      color: Color(0xFFE4E7EC),
-                    ),
-                  ),
+                  Expanded(child: Divider(color: Color(0xFFE4E7EC))),
                   Padding(
-                    padding:
-                    EdgeInsets.symmetric(horizontal: 12),
+                    padding: EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
                       'OR',
                       style: TextStyle(
@@ -505,11 +473,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: Divider(
-                      color: Color(0xFFE4E7EC),
-                    ),
-                  ),
+                  Expanded(child: Divider(color: Color(0xFFE4E7EC))),
                 ],
               ),
 
@@ -519,12 +483,12 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                 onPressed: _isLoading
                     ? null
                     : () {
-                  setState(() {
-                    _isLogin = !_isLogin;
-                    _formKey.currentState?.reset();
-                    _clearControllers();
-                  });
-                },
+                        setState(() {
+                          _isLogin = !_isLogin;
+                          _formKey.currentState?.reset();
+                          _clearControllers();
+                        });
+                      },
                 child: RichText(
                   text: TextSpan(
                     style: const TextStyle(
@@ -538,9 +502,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                             : 'Already have an account? ',
                       ),
                       TextSpan(
-                        text: _isLogin
-                            ? 'Create one'
-                            : 'Sign in',
+                        text: _isLogin ? 'Create one' : 'Sign in',
                         style: const TextStyle(
                           color: Color(0xFF1677FF),
                           fontWeight: FontWeight.w800,
@@ -556,10 +518,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
               const Text(
                 'Plan smarter. Travel better. ✨',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF98A2B3),
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: Color(0xFF98A2B3), fontSize: 12),
               ),
             ],
           ),
@@ -575,10 +534,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
         height: 74,
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-            colors: [
-              Color(0xFF1677FF),
-              Color(0xFF35A7FF),
-            ],
+            colors: [Color(0xFF1677FF), Color(0xFF35A7FF)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -632,22 +588,15 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(15),
-          borderSide: const BorderSide(
-            color: Color(0xFFE4E7EC),
-          ),
+          borderSide: const BorderSide(color: Color(0xFFE4E7EC)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(15),
-          borderSide: const BorderSide(
-            color: Color(0xFFE4E7EC),
-          ),
+          borderSide: const BorderSide(color: Color(0xFFE4E7EC)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(15),
-          borderSide: const BorderSide(
-            color: Color(0xFF1677FF),
-            width: 1.6,
-          ),
+          borderSide: const BorderSide(color: Color(0xFF1677FF), width: 1.6),
         ),
       ),
     );
@@ -670,34 +619,29 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
           duration: const Duration(milliseconds: 250),
           child: _isLoading
               ? const SizedBox(
-            key: ValueKey('loading'),
-            width: 23,
-            height: 23,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              color: Colors.white,
-            ),
-          )
+                  key: ValueKey('loading'),
+                  width: 23,
+                  height: 23,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Colors.white,
+                  ),
+                )
               : Row(
-            key: const ValueKey('button'),
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _isLogin
-                    ? 'Enter TravelEase'
-                    : 'Create My Account',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
+                  key: const ValueKey('button'),
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _isLogin ? 'Enter TravelEase' : 'Create My Account',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    const Icon(Icons.arrow_forward_rounded, size: 20),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 9),
-              const Icon(
-                Icons.arrow_forward_rounded,
-                size: 20,
-              ),
-            ],
-          ),
         ),
       ),
     );

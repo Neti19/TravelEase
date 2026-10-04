@@ -9,27 +9,22 @@ import '../../services/day_planner.dart';
 import '../../services/restaurant_service.dart';
 import '../../services/trip_destination_service.dart';
 import '../../services/trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class RestaurantSelectionScreen extends StatefulWidget {
   final String tripId;
 
-  const RestaurantSelectionScreen({
-    super.key,
-    required this.tripId,
-  });
+  const RestaurantSelectionScreen({super.key, required this.tripId});
 
   @override
   State<RestaurantSelectionScreen> createState() =>
       _RestaurantSelectionScreenState();
 }
 
-class _RestaurantSelectionScreenState
-    extends State<RestaurantSelectionScreen> {
-  final RestaurantService _restaurantService =
-  RestaurantService();
+class _RestaurantSelectionScreenState extends State<RestaurantSelectionScreen> {
+  final RestaurantService _restaurantService = RestaurantService();
 
-  final TripDestinationService _destinationService =
-  TripDestinationService();
+  final TripDestinationService _destinationService = TripDestinationService();
 
   final TripService _tripService = TripService();
 
@@ -43,9 +38,13 @@ class _RestaurantSelectionScreenState
   final Map<String, String> _selectedBySlot = {};
 
   bool _includeBreakfast = false;
+  int _numberOfDays = 1;
+  int _selectedDay = 1;
 
   bool _loading = true;
   bool _saving = false;
+  String? _restaurantLoadError;
+  String? _restaurantLoadWarning;
 
   @override
   void initState() {
@@ -71,8 +70,11 @@ class _RestaurantSelectionScreenState
   }
 
   DateTime _mealTime(DateTime tripStart, int day, MealType meal) {
-    final base = DateTime(tripStart.year, tripStart.month, tripStart.day)
-        .add(Duration(days: day - 1));
+    final base = DateTime(
+      tripStart.year,
+      tripStart.month,
+      tripStart.day,
+    ).add(Duration(days: day - 1));
     switch (meal) {
       case MealType.breakfast:
         return DateTime(base.year, base.month, base.day, 8, 30);
@@ -84,6 +86,9 @@ class _RestaurantSelectionScreenState
   }
 
   Future<void> _loadRestaurants() async {
+    _restaurantLoadError = null;
+    _restaurantLoadWarning = null;
+
     try {
       final trip = await _tripService.getTrip(widget.tripId);
       if (trip == null) throw Exception('Trip not found.');
@@ -94,8 +99,7 @@ class _RestaurantSelectionScreenState
           .get();
       final tripData = rawSnapshot.data() ?? <String, dynamic>{};
 
-      final selectedPlaces =
-      await _destinationService.getSelectedPlaces(
+      final selectedPlaces = await _destinationService.getSelectedPlaces(
         widget.tripId,
       );
 
@@ -106,29 +110,35 @@ class _RestaurantSelectionScreenState
       }
 
       if (places.isEmpty) {
-        throw Exception(
-          'No tourist places selected.',
-        );
+        throw Exception('No tourist places selected.');
       }
 
       final days = trip.numberOfDays < 1 ? 1 : trip.numberOfDays;
       final travelers = trip.travelersCount < 1 ? 1 : trip.travelersCount;
+      final destinationLatitude = (tripData['destinationLatitude'] as num?)
+          ?.toDouble();
+      final destinationLongitude = (tripData['destinationLongitude'] as num?)
+          ?.toDouble();
+      final hasDestinationCoordinates =
+          destinationLatitude != null && destinationLongitude != null;
 
       final clusters = DayPlanner.clusterIntoDays(
         places: places,
         numberOfDays: days,
-        startLatitude: trip.startLatitude,
-        startLongitude: trip.startLongitude,
+        startLatitude: hasDestinationCoordinates
+            ? destinationLatitude
+            : trip.startLatitude,
+        startLongitude: hasDestinationCoordinates
+            ? destinationLongitude
+            : trip.startLongitude,
       );
 
-      final hotelPlans = HotelPlan.fromTrip(
-        tripData,
-        numberOfDays: days,
-      );
+      final hotelPlans = HotelPlan.fromTrip(tripData, numberOfDays: days);
 
       // "Food" in the saved preferences => show a few more options.
       final prefs = tripData['preferences'];
-      final foodLover = prefs is List &&
+      final foodLover =
+          prefs is List &&
           prefs.any((p) => p.toString().toLowerCase().contains('food'));
       final limit = foodLover ? 8 : 5;
 
@@ -153,9 +163,7 @@ class _RestaurantSelectionScreenState
             _MealSlot(
               day: cluster.dayNumber,
               meal: MealType.breakfast,
-              nearName: hotel != null
-                  ? PlaceMap.name(hotel)
-                  : fallback.name,
+              nearName: hotel != null ? PlaceMap.name(hotel) : fallback.name,
               latitude: hotelLat ?? fallback.latitude,
               longitude: hotelLng ?? fallback.longitude,
               time: _mealTime(
@@ -168,8 +176,10 @@ class _RestaurantSelectionScreenState
         }
 
         // Lunch: near the stop reached around the middle of the day.
-        final lunchIndex =
-        (((dayPlaces.length + 1) ~/ 2) - 1).clamp(0, dayPlaces.length - 1);
+        final lunchIndex = (((dayPlaces.length + 1) ~/ 2) - 1).clamp(
+          0,
+          dayPlaces.length - 1,
+        );
         final lunchPlace = dayPlaces[lunchIndex];
         planned.add(
           _MealSlot(
@@ -178,11 +188,7 @@ class _RestaurantSelectionScreenState
             nearName: lunchPlace.name,
             latitude: lunchPlace.latitude,
             longitude: lunchPlace.longitude,
-            time: _mealTime(
-              trip.startDate,
-              cluster.dayNumber,
-              MealType.lunch,
-            ),
+            time: _mealTime(trip.startDate, cluster.dayNumber, MealType.lunch),
           ),
         );
 
@@ -195,23 +201,19 @@ class _RestaurantSelectionScreenState
             nearName: dinnerPlace.name,
             latitude: dinnerPlace.latitude,
             longitude: dinnerPlace.longitude,
-            time: _mealTime(
-              trip.startDate,
-              cluster.dayNumber,
-              MealType.dinner,
-            ),
+            time: _mealTime(trip.startDate, cluster.dayNumber, MealType.dinner),
           ),
         );
       }
 
       // ---- fetch options for all slots (in parallel) ----
       var failed = 0;
+      Object? firstSearchError;
 
       await Future.wait(
         planned.map((slot) async {
           try {
-            slot.options =
-            await _restaurantService.recommendRestaurantsForMeal(
+            slot.options = await _restaurantService.recommendRestaurantsForMeal(
               latitude: slot.latitude,
               longitude: slot.longitude,
               meal: slot.meal,
@@ -220,16 +222,15 @@ class _RestaurantSelectionScreenState
               maxBudgetPerMealPerPerson: budgetPerMeal,
               limit: limit,
             );
-          } catch (_) {
+          } catch (e) {
             failed++;
+            firstSearchError ??= e;
           }
         }),
       );
 
       if (planned.isNotEmpty && failed == planned.length) {
-        throw Exception(
-          'Restaurant search failed. Check your connection and Places API key.',
-        );
+        throw Exception('Restaurant search failed: $firstSearchError');
       }
 
       // ---- restore / pre-select ----
@@ -243,11 +244,7 @@ class _RestaurantSelectionScreenState
         Map<String, dynamic>? preferred = carry?[slot.key];
 
         if (preferred == null && carry == null) {
-          final plan = RestaurantPlan.find(
-            saved,
-            slot.day,
-            slot.meal,
-          );
+          final plan = RestaurantPlan.find(saved, slot.day, slot.meal);
           preferred = plan?.restaurant;
         }
 
@@ -273,13 +270,17 @@ class _RestaurantSelectionScreenState
       if (!mounted) return;
 
       setState(() {
+        _numberOfDays = days;
+        _selectedDay = _selectedDay.clamp(1, days);
         _slots = planned;
-        _restaurants = [
-          for (final slot in planned) ...slot.options,
-        ];
+        _restaurants = [for (final slot in planned) ...slot.options];
         _selectedBySlot
           ..clear()
           ..addAll(selection);
+        _restaurantLoadWarning = failed > 0
+            ? 'Some meals could not load restaurant options: '
+                  '$firstSearchError'
+            : null;
         _loading = false;
       });
     } catch (e) {
@@ -287,11 +288,10 @@ class _RestaurantSelectionScreenState
 
       setState(() {
         _loading = false;
+        _restaurantLoadError = e.toString();
       });
 
-      _showMessage(
-        'Could not load restaurants: $e',
-      );
+      _showMessage('Could not load restaurants: $e');
     }
   }
 
@@ -337,30 +337,22 @@ class _RestaurantSelectionScreenState
         'restaurantPlans': plans.map((p) => p.toJson()).toList(),
         // Legacy field kept in sync so older screens keep working.
         'selectedRestaurant': legacy ?? FieldValue.delete(),
-        'updatedAt':
-        DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
       };
 
-      await _tripService.updateTrip(
-        widget.tripId,
-        data,
-      );
+      await _tripService.updateTrip(widget.tripId, data);
 
       if (!mounted) return;
 
       Navigator.pushNamed(
         context,
         AppRoutes.transportSelection,
-        arguments: {
-          'tripId': widget.tripId,
-        },
+        arguments: {'tripId': widget.tripId},
       );
     } catch (e) {
       if (!mounted) return;
 
-      _showMessage(
-        'Could not save restaurant selection: $e',
-      );
+      _showMessage('Could not save restaurant selection: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -370,24 +362,16 @@ class _RestaurantSelectionScreenState
     }
   }
 
-  String _getName(
-      Map<String, dynamic> restaurant,
-      ) {
-    final displayName =
-    restaurant['displayName']
-    as Map<String, dynamic>?;
+  String _getName(Map<String, dynamic> restaurant) {
+    final displayName = restaurant['displayName'] as Map<String, dynamic>?;
 
-    return displayName?['text']
-        ?.toString() ??
+    return displayName?['text']?.toString() ??
         restaurant['name']?.toString() ??
         'Restaurant';
   }
 
-  String _getPrice(
-      Map<String, dynamic> restaurant,
-      ) {
-    switch (
-    restaurant['priceLevel']?.toString()) {
+  String _getPrice(Map<String, dynamic> restaurant) {
+    switch (restaurant['priceLevel']?.toString()) {
       case 'PRICE_LEVEL_FREE':
         return 'Free';
 
@@ -408,44 +392,26 @@ class _RestaurantSelectionScreenState
     }
   }
 
-  String _getAddress(
-      Map<String, dynamic> restaurant,
-      ) {
-    return restaurant['formattedAddress']
-        ?.toString() ??
+  String _getAddress(Map<String, dynamic> restaurant) {
+    return restaurant['formattedAddress']?.toString() ??
         restaurant['address']?.toString() ??
         'Address unavailable';
   }
 
-  double _getRating(
-      Map<String, dynamic> restaurant,
-      ) {
-    return (restaurant['rating'] as num?)
-        ?.toDouble() ??
-        0;
+  double _getRating(Map<String, dynamic> restaurant) {
+    return (restaurant['rating'] as num?)?.toDouble() ?? 0;
   }
 
-  int _getReviewCount(
-      Map<String, dynamic> restaurant,
-      ) {
-    return (restaurant['userRatingCount'] as num?)
-        ?.toInt() ??
-        0;
+  int _getReviewCount(Map<String, dynamic> restaurant) {
+    return (restaurant['userRatingCount'] as num?)?.toInt() ?? 0;
   }
 
-  String _getNearPlace(
-      Map<String, dynamic> restaurant,
-      ) {
-    return restaurant['nearPlace']
-        ?.toString() ??
-        '';
+  String _getNearPlace(Map<String, dynamic> restaurant) {
+    return restaurant['nearPlace']?.toString() ?? '';
   }
 
-  IconData _getRestaurantIcon(
-      Map<String, dynamic> restaurant,
-      ) {
-    final price =
-    restaurant['priceLevel']?.toString();
+  IconData _getRestaurantIcon(Map<String, dynamic> restaurant) {
+    final price = restaurant['priceLevel']?.toString();
 
     switch (price) {
       case 'PRICE_LEVEL_VERY_EXPENSIVE':
@@ -493,8 +459,7 @@ class _RestaurantSelectionScreenState
                 error = null;
               });
               try {
-                final found =
-                await _restaurantService.searchRestaurantsByText(
+                final found = await _restaurantService.searchRestaurantsByText(
                   query: query,
                   latitude: slot.latitude,
                   longitude: slot.longitude,
@@ -512,7 +477,7 @@ class _RestaurantSelectionScreenState
               }
             }
 
-            return Padding(
+            return SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
                 20,
                 20,
@@ -565,32 +530,25 @@ class _RestaurantSelectionScreenState
                       error!,
                       style: const TextStyle(color: Colors.redAccent),
                     ),
-                  Flexible(
-                    child: ListView(
-                      shrinkWrap: true,
-                      children: [
-                        for (final r in results)
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(
-                              Icons.restaurant_menu_rounded,
-                              color: Color(0xFFFF8A65),
-                            ),
-                            title: Text(
-                              _getName(r),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              _getAddress(r),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: () => Navigator.pop(sheetContext, r),
-                          ),
-                      ],
+                  for (final r in results)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(
+                        Icons.restaurant_menu_rounded,
+                        color: Color(0xFFFF8A65),
+                      ),
+                      title: Text(
+                        _getName(r),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        _getAddress(r),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () => Navigator.pop(sheetContext, r),
                     ),
-                  ),
                 ],
               ),
             );
@@ -609,33 +567,27 @@ class _RestaurantSelectionScreenState
     setState(() {
       slot.options.removeWhere((r) => PlaceMap.id(r) == id);
       slot.options.insert(0, picked);
-      _restaurants = [
-        for (final s in _slots) ...s.options,
-      ];
+      _restaurants = [for (final s in _slots) ...s.options];
       _selectedBySlot[slot.key] = id;
     });
   }
 
-  String _dayTitle(int day) => 'Day $day';
-
   void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(
-          borderRadius:
-          BorderRadius.circular(14),
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.fixed),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
+    final selectedDaySlots = _slots
+        .where((slot) => slot.day == _selectedDay)
+        .toList();
+
     Map<String, dynamic>? selectedRestaurant;
     for (final slot in _slots) {
       final id = _selectedBySlot[slot.key];
@@ -650,8 +602,7 @@ class _RestaurantSelectionScreenState
     }
 
     return Scaffold(
-      backgroundColor:
-      const Color(0xFFF7FAFC),
+      backgroundColor: const Color(0xFFF7FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
@@ -664,66 +615,63 @@ class _RestaurantSelectionScreenState
             fontWeight: FontWeight.w800,
           ),
         ),
+        actions: const [DashboardNavigationButton()],
       ),
       body: _loading
           ? _buildLoading()
           : _restaurants.isEmpty
           ? _buildEmptyState()
           : Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding:
-              const EdgeInsets.fromLTRB(
-                20,
-                18,
-                20,
-                140,
-              ),
               children: [
-                _buildHeader(),
-                const SizedBox(height: 14),
-                _buildBreakfastToggle(),
-                const SizedBox(height: 18),
-                for (var i = 0; i < _slots.length; i++) ...[
-                  if (i == 0 || _slots[i].day != _slots[i - 1].day)
-                    _buildDayTitle(_slots[i].day),
-                  _buildSlotHeader(_slots[i]),
-                  if (_slots[i].options.isEmpty)
-                    _buildNoOptions()
-                  else
-                    ..._slots[i].options.map(
-                          (r) => _buildRestaurantCard(r, _slots[i]),
-                    ),
-                  const SizedBox(height: 6),
-                ],
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 140),
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 14),
+                      if (_restaurantLoadWarning != null) ...[
+                        _buildRestaurantSearchWarning(_restaurantLoadWarning!),
+                        const SizedBox(height: 14),
+                      ],
+                      _buildDaySelector(),
+                      const SizedBox(height: 14),
+                      _buildBreakfastToggle(),
+                      const SizedBox(height: 18),
+                      if (selectedDaySlots.isEmpty)
+                        _buildNoMealsForDay()
+                      else
+                        for (final slot in selectedDaySlots) ...[
+                          _buildSlotHeader(slot),
+                          if (slot.options.isEmpty)
+                            _buildNoOptions()
+                          else
+                            ...slot.options.map(
+                              (r) => _buildRestaurantCard(r, slot),
+                            ),
+                          const SizedBox(height: 6),
+                        ],
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar:
-      _loading || _restaurants.isEmpty
+      bottomNavigationBar: _loading || _restaurants.isEmpty
           ? null
-          : _buildBottomBar(
-        selectedRestaurant,
-      ),
+          : _buildBottomBar(selectedRestaurant),
     );
   }
 
   Widget _buildLoading() {
     return Center(
       child: Column(
-        mainAxisAlignment:
-        MainAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
             height: 70,
             width: 70,
             decoration: BoxDecoration(
               color: const Color(0xFFFFEDE6),
-              borderRadius:
-              BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(22),
             ),
             child: const Icon(
               Icons.restaurant_rounded,
@@ -743,9 +691,7 @@ class _RestaurantSelectionScreenState
           const SizedBox(height: 8),
           Text(
             'Looking around your selected places',
-            style: TextStyle(
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(color: Colors.grey.shade600),
           ),
           const SizedBox(height: 20),
           const SizedBox(
@@ -761,41 +707,57 @@ class _RestaurantSelectionScreenState
     );
   }
 
+  Widget _buildRestaurantSearchWarning(String message) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF4C78A)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFE07817)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: Color(0xFF7A4B11), height: 1.35),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFFFF8A65),
-            Color(0xFFFFB085),
-          ],
+          colors: [Color(0xFFFF8A65), Color(0xFFFFB085)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius:
-        BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFFF8A65)
-                .withOpacity(0.18),
+            color: const Color(0xFFFF8A65).withOpacity(0.18),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
         ],
       ),
       child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             height: 50,
             width: 50,
             decoration: BoxDecoration(
-              color:
-              Colors.white.withOpacity(0.2),
-              borderRadius:
-              BorderRadius.circular(16),
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(
               Icons.restaurant_rounded,
@@ -806,16 +768,14 @@ class _RestaurantSelectionScreenState
           const SizedBox(width: 14),
           const Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Where will you eat?',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 21,
-                    fontWeight:
-                    FontWeight.w800,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 SizedBox(height: 6),
@@ -835,127 +795,81 @@ class _RestaurantSelectionScreenState
     );
   }
 
-  Widget _buildRestaurantCard(
-      Map<String, dynamic> restaurant,
-      _MealSlot slot,
-      ) {
-    final id =
-        restaurant['id']?.toString() ?? '';
+  Widget _buildRestaurantCard(Map<String, dynamic> restaurant, _MealSlot slot) {
+    final id = restaurant['id']?.toString() ?? '';
 
-    final selected =
-        _selectedBySlot[slot.key] == id;
+    final selected = _selectedBySlot[slot.key] == id;
 
-    final distanceKm =
-    (restaurant['distanceKm'] as num?)?.toDouble();
-    final perPerson =
-    PlaceMap.estimatedMealPerPerson(restaurant);
+    final distanceKm = (restaurant['distanceKm'] as num?)?.toDouble();
+    final perPerson = PlaceMap.estimatedMealPerPerson(restaurant);
     final openState = restaurant['openAtMealTime'];
 
-    final name =
-    _getName(restaurant);
-    final address =
-    _getAddress(restaurant);
-    final rating =
-    _getRating(restaurant);
-    final reviewCount =
-    _getReviewCount(restaurant);
-    final nearPlace =
-    _getNearPlace(restaurant);
-    final price =
-    _getPrice(restaurant);
+    final name = _getName(restaurant);
+    final address = _getAddress(restaurant);
+    final rating = _getRating(restaurant);
+    final reviewCount = _getReviewCount(restaurant);
+    final nearPlace = _getNearPlace(restaurant);
+    final price = _getPrice(restaurant);
 
     return AnimatedContainer(
-      duration:
-      const Duration(milliseconds: 220),
-      margin:
-      const EdgeInsets.only(bottom: 16),
+      duration: const Duration(milliseconds: 220),
+      margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius:
-        BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: selected
-              ? const Color(0xFFFF8A65)
-              : const Color(0xFFE6EDF3),
+          color: selected ? const Color(0xFFFF8A65) : const Color(0xFFE6EDF3),
           width: selected ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(
-              selected ? 0.08 : 0.035,
-            ),
-            blurRadius:
-            selected ? 18 : 10,
-            offset:
-            const Offset(0, 5),
+            color: Colors.black.withOpacity(selected ? 0.08 : 0.035),
+            blurRadius: selected ? 18 : 10,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
       child: InkWell(
-        borderRadius:
-        BorderRadius.circular(22),
-        onTap: () =>
-            _selectRestaurant(slot.key, id),
+        borderRadius: BorderRadius.circular(22),
+        onTap: () => _selectRestaurant(slot.key, id),
         child: Padding(
-          padding:
-          const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
                     height: 62,
                     width: 62,
-                    decoration:
-                    BoxDecoration(
+                    decoration: BoxDecoration(
                       color: selected
-                          ? const Color(
-                        0xFFFFEDE6,
-                      )
-                          : const Color(
-                        0xFFFFF6F1,
-                      ),
-                      borderRadius:
-                      BorderRadius.circular(
-                        18,
-                      ),
+                          ? const Color(0xFFFFEDE6)
+                          : const Color(0xFFFFF6F1),
+                      borderRadius: BorderRadius.circular(18),
                     ),
                     child: Icon(
-                      _getRestaurantIcon(
-                        restaurant,
-                      ),
+                      _getRestaurantIcon(restaurant),
                       color: selected
-                          ? const Color(
-                        0xFFFF8A65,
-                      )
-                          : const Color(
-                        0xFFE97855,
-                      ),
+                          ? const Color(0xFFFF8A65)
+                          : const Color(0xFFE97855),
                       size: 30,
                     ),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
-                      crossAxisAlignment:
-                      CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           name,
                           maxLines: 2,
-                          overflow:
-                          TextOverflow.ellipsis,
-                          style:
-                          const TextStyle(
-                            color:
-                            Color(0xFF102A43),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF102A43),
                             fontSize: 17,
-                            fontWeight:
-                            FontWeight.w800,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -963,40 +877,23 @@ class _RestaurantSelectionScreenState
                           children: [
                             const Icon(
                               Icons.star_rounded,
-                              color:
-                              Color(0xFFFFB703),
+                              color: Color(0xFFFFB703),
                               size: 18,
                             ),
-                            const SizedBox(
-                              width: 4,
-                            ),
+                            const SizedBox(width: 4),
                             Text(
-                              rating > 0
-                                  ? rating
-                                  .toStringAsFixed(
-                                1,
-                              )
-                                  : 'N/A',
-                              style:
-                              const TextStyle(
-                                fontWeight:
-                                FontWeight.w700,
-                                color:
-                                Color(0xFF102A43),
+                              rating > 0 ? rating.toStringAsFixed(1) : 'N/A',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF102A43),
                               ),
                             ),
-                            if (reviewCount >
-                                0) ...[
-                              const SizedBox(
-                                width: 4,
-                              ),
+                            if (reviewCount > 0) ...[
+                              const SizedBox(width: 4),
                               Text(
                                 '($reviewCount)',
-                                style:
-                                TextStyle(
-                                  color: Colors
-                                      .grey
-                                      .shade600,
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
                                   fontSize: 12,
                                 ),
                               ),
@@ -1008,33 +905,20 @@ class _RestaurantSelectionScreenState
                   ),
                   const SizedBox(width: 8),
                   AnimatedContainer(
-                    duration:
-                    const Duration(
-                      milliseconds: 180,
-                    ),
+                    duration: const Duration(milliseconds: 180),
                     height: 34,
                     width: 34,
-                    decoration:
-                    BoxDecoration(
+                    decoration: BoxDecoration(
                       color: selected
-                          ? const Color(
-                        0xFFFF8A65,
-                      )
-                          : const Color(
-                        0xFFF1F5F8,
-                      ),
+                          ? const Color(0xFFFF8A65)
+                          : const Color(0xFFF1F5F8),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
                       selected
                           ? Icons.check_rounded
-                          : Icons
-                          .radio_button_unchecked_rounded,
-                      color: selected
-                          ? Colors.white
-                          : const Color(
-                        0xFF78909C,
-                      ),
+                          : Icons.radio_button_unchecked_rounded,
+                      color: selected ? Colors.white : const Color(0xFF78909C),
                       size: 20,
                     ),
                   ),
@@ -1042,13 +926,11 @@ class _RestaurantSelectionScreenState
               ),
               const SizedBox(height: 14),
               Row(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Icon(
                     Icons.location_on_outlined,
-                    color:
-                    Color(0xFFFF8A65),
+                    color: Color(0xFFFF8A65),
                     size: 19,
                   ),
                   const SizedBox(width: 7),
@@ -1056,11 +938,9 @@ class _RestaurantSelectionScreenState
                     child: Text(
                       address,
                       maxLines: 2,
-                      overflow:
-                      TextOverflow.ellipsis,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color:
-                        Colors.grey.shade700,
+                        color: Colors.grey.shade700,
                         fontSize: 13,
                         height: 1.35,
                       ),
@@ -1074,8 +954,7 @@ class _RestaurantSelectionScreenState
                   children: [
                     const Icon(
                       Icons.near_me_rounded,
-                      color:
-                      Color(0xFF1677FF),
+                      color: Color(0xFF1677FF),
                       size: 18,
                     ),
                     const SizedBox(width: 7),
@@ -1083,15 +962,11 @@ class _RestaurantSelectionScreenState
                       child: Text(
                         'Near $nearPlace',
                         maxLines: 1,
-                        overflow:
-                        TextOverflow.ellipsis,
-                        style:
-                        const TextStyle(
-                          color:
-                          Color(0xFF536B7A),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF536B7A),
                           fontSize: 13,
-                          fontWeight:
-                          FontWeight.w600,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
@@ -1113,13 +988,11 @@ class _RestaurantSelectionScreenState
                         '${distanceKm.toStringAsFixed(1)} km from ${slot.nearName}'
                         '${openState == true ? ' \u00B7 Open at ${slot.meal.label.toLowerCase()} time' : ''}',
                         maxLines: 2,
-                        overflow:
-                        TextOverflow.ellipsis,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Color(0xFF536B7A),
                           fontSize: 13,
-                          fontWeight:
-                          FontWeight.w600,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
@@ -1130,48 +1003,32 @@ class _RestaurantSelectionScreenState
               Row(
                 children: [
                   Container(
-                    padding:
-                    const EdgeInsets
-                        .symmetric(
+                    padding: const EdgeInsets.symmetric(
                       horizontal: 11,
                       vertical: 7,
                     ),
-                    decoration:
-                    BoxDecoration(
-                      color: const Color(
-                        0xFFFFF4E8,
-                      ),
-                      borderRadius:
-                      BorderRadius.circular(
-                        10,
-                      ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF4E8),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       '$price \u00B7 \u2248 \u20B9${perPerson.round()}/person',
-                      style:
-                      const TextStyle(
-                        color:
-                        Color(0xFFE76F00),
+                      style: const TextStyle(
+                        color: Color(0xFFE76F00),
                         fontSize: 12,
-                        fontWeight:
-                        FontWeight.w700,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                   const Spacer(),
                   Text(
-                    selected
-                        ? 'Selected'
-                        : 'Tap to select',
+                    selected ? 'Selected' : 'Tap to select',
                     style: TextStyle(
                       color: selected
-                          ? const Color(
-                        0xFFFF8A65,
-                      )
+                          ? const Color(0xFFFF8A65)
                           : Colors.grey.shade600,
                       fontSize: 12,
-                      fontWeight:
-                      FontWeight.w700,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
@@ -1185,16 +1042,11 @@ class _RestaurantSelectionScreenState
 
   Widget _buildBreakfastToggle() {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 6,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFE6EDF3),
-        ),
+        border: Border.all(color: const Color(0xFFE6EDF3)),
       ),
       child: Row(
         children: [
@@ -1206,8 +1058,7 @@ class _RestaurantSelectionScreenState
           const SizedBox(width: 10),
           const Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Plan breakfast too',
@@ -1220,10 +1071,7 @@ class _RestaurantSelectionScreenState
                 SizedBox(height: 2),
                 Text(
                   'Lunch and dinner are suggested by default',
-                  style: TextStyle(
-                    color: Color(0xFF78909C),
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Color(0xFF78909C), fontSize: 12),
                 ),
               ],
             ),
@@ -1234,28 +1082,80 @@ class _RestaurantSelectionScreenState
             onChanged: _loading
                 ? null
                 : (value) {
-              setState(() {
-                _includeBreakfast = value;
-                _loading = true;
-              });
-              _loadRestaurants();
-            },
+                    setState(() {
+                      _includeBreakfast = value;
+                      _loading = true;
+                    });
+                    _loadRestaurants();
+                  },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDayTitle(int day) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 10),
-      child: Text(
-        _dayTitle(day),
-        style: const TextStyle(
-          color: Color(0xFF102A43),
-          fontSize: 19,
-          fontWeight: FontWeight.w800,
+  Widget _buildDaySelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Restaurant options for',
+          style: TextStyle(
+            color: Color(0xFF102A43),
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+          ),
         ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var day = 1; day <= _numberOfDays; day++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text('Day $day'),
+                    selected: _selectedDay == day,
+                    onSelected: (selected) {
+                      if (!selected) return;
+                      setState(() {
+                        _selectedDay = day;
+                      });
+                    },
+                    selectedColor: const Color(0xFFFFEDE6),
+                    labelStyle: TextStyle(
+                      color: _selectedDay == day
+                          ? const Color(0xFFE76F00)
+                          : const Color(0xFF536B7A),
+                      fontWeight: FontWeight.w700,
+                    ),
+                    side: BorderSide(
+                      color: _selectedDay == day
+                          ? const Color(0xFFFF8A65)
+                          : const Color(0xFFE1EAF2),
+                    ),
+                    showCheckmark: false,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNoMealsForDay() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE6EDF3)),
+      ),
+      child: Text(
+        'No meal stops were planned for Day $_selectedDay.',
+        style: const TextStyle(color: Color(0xFF536B7A)),
       ),
     );
   }
@@ -1266,10 +1166,7 @@ class _RestaurantSelectionScreenState
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 7,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               color: const Color(0xFFFFEDE6),
               borderRadius: BorderRadius.circular(12),
@@ -1316,67 +1213,43 @@ class _RestaurantSelectionScreenState
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFE6EDF3),
-        ),
+        border: Border.all(color: const Color(0xFFE6EDF3)),
       ),
       child: Text(
         'No open restaurants found nearby. Use Search or skip this meal.',
-        style: TextStyle(
-          color: Colors.grey.shade600,
-          fontSize: 13,
-        ),
+        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
       ),
     );
   }
 
-  Widget _buildBottomBar(
-      Map<String, dynamic>?
-      selectedRestaurant,
-      ) {
-    final hasSelection =
-        _selectedBySlot.isNotEmpty;
+  Widget _buildBottomBar(Map<String, dynamic>? selectedRestaurant) {
+    final hasSelection = _selectedBySlot.isNotEmpty;
 
     return SafeArea(
       child: Container(
-        padding:
-        const EdgeInsets.fromLTRB(
-          20,
-          12,
-          20,
-          16,
-        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
         decoration: BoxDecoration(
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black
-                  .withOpacity(0.08),
+              color: Colors.black.withOpacity(0.08),
               blurRadius: 18,
-              offset:
-              const Offset(0, -5),
+              offset: const Offset(0, -5),
             ),
           ],
         ),
         child: Column(
-          mainAxisSize:
-          MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
                 Icon(
                   hasSelection
-                      ? Icons
-                      .check_circle_rounded
-                      : Icons
-                      .info_outline_rounded,
+                      ? Icons.check_circle_rounded
+                      : Icons.info_outline_rounded,
                   color: hasSelection
-                      ? const Color(
-                    0xFFFF8A65,
-                  )
-                      : const Color(
-                    0xFF78909C,
-                  ),
+                      ? const Color(0xFFFF8A65)
+                      : const Color(0xFF78909C),
                   size: 19,
                 ),
                 const SizedBox(width: 8),
@@ -1387,38 +1260,27 @@ class _RestaurantSelectionScreenState
                         : 'Restaurant selection is optional',
                     style: TextStyle(
                       color: hasSelection
-                          ? const Color(
-                        0xFF102A43,
-                      )
+                          ? const Color(0xFF102A43)
                           : Colors.grey.shade700,
                       fontSize: 13,
-                      fontWeight:
-                      FontWeight.w600,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
               ],
             ),
-            if (selectedRestaurant !=
-                null) ...[
+            if (selectedRestaurant != null) ...[
               const SizedBox(height: 5),
               Align(
-                alignment:
-                Alignment.centerLeft,
+                alignment: Alignment.centerLeft,
                 child: Text(
-                  _getName(
-                    selectedRestaurant,
-                  ),
+                  _getName(selectedRestaurant),
                   maxLines: 1,
-                  overflow:
-                  TextOverflow.ellipsis,
-                  style:
-                  const TextStyle(
-                    color:
-                    Color(0xFFFF8A65),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFFF8A65),
                     fontSize: 12,
-                    fontWeight:
-                    FontWeight.w700,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -1428,58 +1290,39 @@ class _RestaurantSelectionScreenState
               width: double.infinity,
               height: 54,
               child: ElevatedButton(
-                onPressed:
-                _saving ? null : _continue,
-                style:
-                ElevatedButton.styleFrom(
-                  backgroundColor:
-                  const Color(0xFFFF8A65),
-                  foregroundColor:
-                  Colors.white,
-                  disabledBackgroundColor:
-                  const Color(0xFFFFC5B2),
+                onPressed: _saving ? null : _continue,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF8A65),
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: const Color(0xFFFFC5B2),
                   elevation: 0,
-                  shape:
-                  RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(
-                      17,
-                    ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(17),
                   ),
                 ),
                 child: _saving
                     ? const SizedBox(
-                  height: 22,
-                  width: 22,
-                  child:
-                  CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color:
-                    Colors.white,
-                  ),
-                )
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
                     : const Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment
-                      .center,
-                  children: [
-                    Text(
-                      'Continue to Transport',
-                      style:
-                      TextStyle(
-                        fontSize: 15,
-                        fontWeight:
-                        FontWeight.w800,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Continue to Transport',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(Icons.arrow_forward_rounded, size: 20),
+                        ],
                       ),
-                    ),
-                    SizedBox(width: 8),
-                    Icon(
-                      Icons
-                          .arrow_forward_rounded,
-                      size: 20,
-                    ),
-                  ],
-                ),
               ),
             ),
           ],
@@ -1489,97 +1332,91 @@ class _RestaurantSelectionScreenState
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
-          children: [
-            Container(
-              height: 86,
-              width: 86,
-              decoration:
-              BoxDecoration(
-                color:
-                const Color(0xFFFFEDE6),
-                borderRadius:
-                BorderRadius.circular(
-                  28,
-                ),
-              ),
-              child: const Icon(
-                Icons.restaurant_outlined,
-                size: 42,
-                color:
-                Color(0xFFFF8A65),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'No restaurants found',
-              textAlign:
-              TextAlign.center,
-              style: TextStyle(
-                color:
-                Color(0xFF102A43),
-                fontSize: 21,
-                fontWeight:
-                FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'We could not find nearby restaurants for your selected places.',
-              textAlign:
-              TextAlign.center,
-              style: TextStyle(
-                color:
-                Colors.grey.shade600,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 22),
-            OutlinedButton.icon(
-              onPressed: () {
-                setState(() {
-                  _loading = true;
-                });
-                _loadRestaurants();
-              },
-              icon: const Icon(
-                Icons.refresh_rounded,
-              ),
-              label: const Text(
-                'Try Again',
-              ),
-              style:
-              OutlinedButton.styleFrom(
-                foregroundColor:
-                const Color(
-                  0xFFFF8A65,
-                ),
-                side: const BorderSide(
-                  color:
-                  Color(0xFFFF8A65),
-                ),
-                padding:
-                const EdgeInsets
-                    .symmetric(
-                  horizontal: 22,
-                  vertical: 13,
-                ),
-                shape:
-                RoundedRectangleBorder(
-                  borderRadius:
-                  BorderRadius.circular(
-                    14,
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(30),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    height: 86,
+                    width: 86,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFEDE6),
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: const Icon(
+                      Icons.restaurant_outlined,
+                      size: 42,
+                      color: Color(0xFFFF8A65),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 20),
+                  Text(
+                    _restaurantLoadError == null
+                        ? 'No restaurants found'
+                        : 'Restaurant search failed',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFF102A43),
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _restaurantLoadError ??
+                        'We could not find nearby restaurants for your selected places.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade600, height: 1.4),
+                  ),
+                  const SizedBox(height: 22),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _loading = true;
+                      });
+                      _loadRestaurants();
+                    },
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try Again'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFF8A65),
+                      side: const BorderSide(color: Color(0xFFFF8A65)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 13,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: _saving ? null : _continue,
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                    label: const Text('Continue without restaurants'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8A65),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 13,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );

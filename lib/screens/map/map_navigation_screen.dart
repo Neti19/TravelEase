@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -8,25 +7,21 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app_routes.dart';
 import '../../services/route_service.dart';
 import '../../services/trip_destination_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class MapNavigationScreen extends StatefulWidget {
   final String tripId;
 
-  const MapNavigationScreen({
-    super.key,
-    required this.tripId,
-  });
+  const MapNavigationScreen({super.key, required this.tripId});
 
   @override
-  State<MapNavigationScreen> createState() =>
-      _MapNavigationScreenState();
+  State<MapNavigationScreen> createState() => _MapNavigationScreenState();
 }
 
 class _MapNavigationScreenState extends State<MapNavigationScreen> {
   final RouteService _routeService = RouteService();
 
-  final TripDestinationService _destinationService =
-  TripDestinationService();
+  final TripDestinationService _destinationService = TripDestinationService();
 
   GoogleMapController? _mapController;
 
@@ -98,26 +93,18 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
 
       // STARTING LOCATION
 
-      final startLatitude =
-      (trip['startLatitude'] as num?)?.toDouble();
+      final startLatitude = (trip['startLatitude'] as num?)?.toDouble();
 
-      final startLongitude =
-      (trip['startLongitude'] as num?)?.toDouble();
+      final startLongitude = (trip['startLongitude'] as num?)?.toDouble();
 
       final startLocation =
-          trip['startLocation']?.toString() ??
-              'Starting Location';
+          trip['startLocation']?.toString() ?? 'Starting Location';
 
       if (startLatitude == null || startLongitude == null) {
-        throw Exception(
-          'Starting location coordinates are missing.',
-        );
+        throw Exception('Starting location coordinates are missing.');
       }
 
-      _initialLocation = LatLng(
-        startLatitude,
-        startLongitude,
-      );
+      _initialLocation = LatLng(startLatitude, startLongitude);
 
       final origin = RoutePoint(
         id: 'start',
@@ -129,11 +116,11 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
 
       // GET DESTINATIONS AND TOURIST PLACES
 
-      final destinations =
-      await _destinationService.getDestinations(tripId);
+      final destinations = await _destinationService.getDestinations(tripId);
 
-      final selectedPlaces =
-      await _destinationService.getSelectedPlaces(tripId);
+      final selectedPlaces = await _destinationService.getSelectedPlaces(
+        tripId,
+      );
 
       final routeStops = <RoutePoint>[];
 
@@ -159,11 +146,9 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         final location = selectedHotel['location'];
 
         if (location is Map) {
-          final latitude =
-          (location['latitude'] as num?)?.toDouble();
+          final latitude = (location['latitude'] as num?)?.toDouble();
 
-          final longitude =
-          (location['longitude'] as num?)?.toDouble();
+          final longitude = (location['longitude'] as num?)?.toDouble();
 
           if (latitude != null && longitude != null) {
             final displayName = selectedHotel['displayName'];
@@ -171,8 +156,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
             routeStops.add(
               RoutePoint(
                 id: selectedHotel['id']?.toString() ?? 'hotel',
-                name: displayName is Map &&
-                    displayName['text'] != null
+                name: displayName is Map && displayName['text'] != null
                     ? displayName['text'].toString()
                     : 'Selected Hotel',
                 latitude: latitude,
@@ -192,22 +176,17 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         final location = selectedRestaurant['location'];
 
         if (location is Map) {
-          final latitude =
-          (location['latitude'] as num?)?.toDouble();
+          final latitude = (location['latitude'] as num?)?.toDouble();
 
-          final longitude =
-          (location['longitude'] as num?)?.toDouble();
+          final longitude = (location['longitude'] as num?)?.toDouble();
 
           if (latitude != null && longitude != null) {
-            final displayName =
-            selectedRestaurant['displayName'];
+            final displayName = selectedRestaurant['displayName'];
 
             routeStops.add(
               RoutePoint(
-                id: selectedRestaurant['id']?.toString() ??
-                    'restaurant',
-                name: displayName is Map &&
-                    displayName['text'] != null
+                id: selectedRestaurant['id']?.toString() ?? 'restaurant',
+                name: displayName is Map && displayName['text'] != null
                     ? displayName['text'].toString()
                     : 'Selected Restaurant',
                 latitude: latitude,
@@ -237,16 +216,16 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
 
       // SAVE ROUTE TO FIRESTORE
 
-      await FirebaseFirestore.instance
-          .collection('trips')
-          .doc(tripId)
-          .set(
-        {
+      try {
+        await FirebaseFirestore.instance.collection('trips').doc(tripId).set({
           'route': {
             'distanceMeters': result.distanceMeters,
             'duration': result.duration,
             'distanceKm': result.distanceKm,
             'formattedDuration': result.formattedDuration,
+            'isEstimated': result.isEstimated,
+            if (result.estimateReason != null)
+              'estimateReason': result.estimateReason,
             'orderedStops': result.orderedPoints
                 .map((point) => point.toMap())
                 .toList(),
@@ -254,9 +233,10 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
           },
           'routeGenerated': true,
           'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+        }, SetOptions(merge: true));
+      } catch (e) {
+        _showMessage('Route created, but could not save it to your trip: $e');
+      }
     } catch (e) {
       if (!mounted) return;
 
@@ -272,22 +252,15 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
   // ============================================================
 
   Future<void> _openGoogleMapsNavigation(RoutePoint point) async {
-    final uri = Uri.https(
-      'www.google.com',
-      '/maps/dir/',
-      {
-        'api': '1',
-        'destination': '${point.latitude},${point.longitude}',
-        'travelmode': 'driving',
-        'dir_action': 'navigate',
-      },
-    );
+    final uri = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'destination': '${point.latitude},${point.longitude}',
+      'travelmode': 'driving',
+      'dir_action': 'navigate',
+    });
 
     try {
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
       if (!opened) {
         _showMessage('Could not open Google Maps.');
@@ -319,25 +292,17 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         .map((point) => '${point.latitude},${point.longitude}')
         .join('|');
 
-    final uri = Uri.https(
-      'www.google.com',
-      '/maps/dir/',
-      {
-        'api': '1',
-        'origin': '${origin.latitude},${origin.longitude}',
-        'destination':
-        '${destination.latitude},${destination.longitude}',
-        if (waypoints.isNotEmpty) 'waypoints': waypoints,
-        'travelmode': 'driving',
-        'dir_action': 'navigate',
-      },
-    );
+    final uri = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'origin': '${origin.latitude},${origin.longitude}',
+      'destination': '${destination.latitude},${destination.longitude}',
+      if (waypoints.isNotEmpty) 'waypoints': waypoints,
+      'travelmode': 'driving',
+      'dir_action': 'navigate',
+    });
 
     try {
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
       if (!opened) {
         _showMessage('Could not open Google Maps.');
@@ -352,30 +317,28 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
   // ============================================================
 
   void _addRouteStop(
-      List<RoutePoint> routeStops,
-      Map<String, dynamic> place,
-      String type,
-      ) {
-    final latitude =
-    (place['latitude'] as num?)?.toDouble();
+    List<RoutePoint> routeStops,
+    Map<String, dynamic> place,
+    String type,
+  ) {
+    final latitude = (place['latitude'] as num?)?.toDouble();
 
-    final longitude =
-    (place['longitude'] as num?)?.toDouble();
+    final longitude = (place['longitude'] as num?)?.toDouble();
 
     if (latitude == null || longitude == null) {
       return;
     }
 
     final duplicate = routeStops.any(
-          (stop) =>
-      stop.type != 'hotel' &&
+      (stop) =>
+          stop.type != 'hotel' &&
           stop.type != 'restaurant' &&
           Geolocator.distanceBetween(
-            stop.latitude,
-            stop.longitude,
-            latitude,
-            longitude,
-          ) <
+                stop.latitude,
+                stop.longitude,
+                latitude,
+                longitude,
+              ) <
               30,
     );
 
@@ -393,8 +356,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
 
     routeStops.add(
       RoutePoint(
-        id: place['id']?.toString() ??
-            'stop_${routeStops.length}',
+        id: place['id']?.toString() ?? 'stop_${routeStops.length}',
         name: name,
         latitude: latitude,
         longitude: longitude,
@@ -415,29 +377,20 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
     for (int i = 0; i < result.orderedPoints.length; i++) {
       final point = result.orderedPoints[i];
 
-      final position = LatLng(
-        point.latitude,
-        point.longitude,
-      );
+      final position = LatLng(point.latitude, point.longitude);
 
       BitmapDescriptor icon = BitmapDescriptor.defaultMarker;
 
       if (point.type == 'start') {
-        icon = BitmapDescriptor.defaultMarkerWithHue(
-          BitmapDescriptor.hueGreen,
-        );
+        icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
       } else if (point.type == 'hotel') {
-        icon = BitmapDescriptor.defaultMarkerWithHue(
-          BitmapDescriptor.hueRed,
-        );
+        icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
       } else if (point.type == 'restaurant') {
         icon = BitmapDescriptor.defaultMarkerWithHue(
           BitmapDescriptor.hueOrange,
         );
       } else {
-        icon = BitmapDescriptor.defaultMarkerWithHue(
-          BitmapDescriptor.hueAzure,
-        );
+        icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
       }
 
       markers.add(
@@ -454,18 +407,11 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
     }
 
     final polylinePoints = result.polylinePoints
-        .map(
-          (point) => LatLng(
-        point.latitude,
-        point.longitude,
-      ),
-    )
+        .map((point) => LatLng(point.latitude, point.longitude))
         .toList();
 
     if (polylinePoints.length < 2) {
-      throw Exception(
-        'Route does not contain enough points to draw the road.',
-      );
+      throw Exception('Route does not contain enough points to draw the road.');
     }
 
     final polylines = <Polyline>{
@@ -474,7 +420,10 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         points: polylinePoints,
         width: 6,
         color: const Color(0xFF1677FF),
-        geodesic: false,
+        geodesic: result.isEstimated,
+        patterns: result.isEstimated
+            ? [PatternItem.dash(18), PatternItem.gap(10)]
+            : const [],
       ),
     };
 
@@ -611,22 +560,17 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
       await FirebaseFirestore.instance
           .collection('trips')
           .doc(widget.tripId)
-          .set(
-        {
-          'routeConfirmed': true,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+          .set({
+            'routeConfirmed': true,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
 
       if (!mounted) return;
 
       Navigator.pushNamed(
         context,
         AppRoutes.generateItinerary,
-        arguments: {
-          'tripId': widget.tripId,
-        },
+        arguments: {'tripId': widget.tripId},
       );
     } catch (e) {
       if (!mounted) return;
@@ -642,18 +586,6 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
   }
 
   // ============================================================
-  // HOME
-  // ============================================================
-
-  void _goHome() {
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      AppRoutes.home,
-          (_) => false,
-    );
-  }
-
-  // ============================================================
   // MESSAGE
   // ============================================================
 
@@ -661,14 +593,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-      ),
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.fixed),
     );
   }
 
@@ -698,8 +623,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
       children: [
         GoogleMap(
           initialCameraPosition: CameraPosition(
-            target: _initialLocation ??
-                const LatLng(22.6916, 72.8634),
+            target: _initialLocation ?? const LatLng(22.6916, 72.8634),
             zoom: 10,
           ),
           onMapCreated: (controller) async {
@@ -707,12 +631,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
 
             if (_routeResult != null) {
               final points = _routeResult!.polylinePoints
-                  .map(
-                    (point) => LatLng(
-                  point.latitude,
-                  point.longitude,
-                ),
-              )
+                  .map((point) => LatLng(point.latitude, point.longitude))
                   .toList();
 
               await _fitRouteOnMap(points);
@@ -727,7 +646,6 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         ),
 
         // TOP BAR
-
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -770,23 +688,17 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                   icon: Icons.refresh_rounded,
                   onTap: _loading ? null : _calculateMainRoute,
                 ),
+                const DashboardNavigationButton(),
               ],
             ),
           ),
         ),
 
         // ROUTE SUMMARY
-
         if (!_loading && _routeResult != null)
-          Positioned(
-            top: 92,
-            left: 16,
-            right: 16,
-            child: _buildRouteSummary(),
-          ),
+          Positioned(top: 92, left: 16, right: 16, child: _buildRouteSummary()),
 
         // LOADING
-
         if (_loading)
           Container(
             color: Colors.white.withOpacity(0.78),
@@ -851,10 +763,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
   // MAP BUTTON
   // ============================================================
 
-  Widget _mapButton({
-    required IconData icon,
-    required VoidCallback? onTap,
-  }) {
+  Widget _mapButton({required IconData icon, required VoidCallback? onTap}) {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
@@ -868,9 +777,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
           width: 48,
           child: Icon(
             icon,
-            color: onTap == null
-                ? Colors.grey
-                : const Color(0xFF102A43),
+            color: onTap == null ? Colors.grey : const Color(0xFF102A43),
           ),
         ),
       ),
@@ -915,22 +822,26 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                 ),
               ),
               const SizedBox(width: 11),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Optimized Route',
-                      style: TextStyle(
+                      result.isEstimated
+                          ? 'Estimated Route'
+                          : 'Optimized Route',
+                      style: const TextStyle(
                         color: Color(0xFF102A43),
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
-                      'Your stops are arranged efficiently',
-                      style: TextStyle(
+                      result.isEstimated
+                          ? 'Approximate distance; live route unavailable'
+                          : 'Your stops are arranged efficiently',
+                      style: const TextStyle(
                         color: Color(0xFF78909C),
                         fontSize: 11.5,
                       ),
@@ -950,11 +861,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                   'Total distance',
                 ),
               ),
-              Container(
-                height: 35,
-                width: 1,
-                color: const Color(0xFFE5EBF0),
-              ),
+              Container(height: 35, width: 1, color: const Color(0xFFE5EBF0)),
               Expanded(
                 child: _summaryItem(
                   Icons.access_time_rounded,
@@ -962,11 +869,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                   'Travel time',
                 ),
               ),
-              Container(
-                height: 35,
-                width: 1,
-                color: const Color(0xFFE5EBF0),
-              ),
+              Container(height: 35, width: 1, color: const Color(0xFFE5EBF0)),
               Expanded(
                 child: _summaryItem(
                   Icons.directions_car_rounded,
@@ -976,25 +879,51 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
               ),
             ],
           ),
+          if (result.isEstimated) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF6E8),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.info_outline_rounded,
+                    color: Color(0xFFB66A13),
+                    size: 17,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Showing an approximate route because '
+                      '${result.estimateReason ?? 'live routing is unavailable'}. '
+                      'Start Navigation opens live directions in Google Maps.',
+                      style: TextStyle(
+                        color: Color(0xFF87500F),
+                        fontSize: 11,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _summaryItem(
-      IconData icon,
-      String value,
-      String label,
-      ) {
+  Widget _summaryItem(IconData icon, String value, String label) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 7),
       child: Column(
         children: [
-          Icon(
-            icon,
-            color: const Color(0xFF1677FF),
-            size: 19,
-          ),
+          Icon(icon, color: const Color(0xFF1677FF), size: 19),
           const SizedBox(height: 5),
           Text(
             value,
@@ -1013,10 +942,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF90A4AE),
-              fontSize: 9.5,
-            ),
+            style: const TextStyle(color: Color(0xFF90A4AE), fontSize: 9.5),
           ),
         ],
       ),
@@ -1029,65 +955,78 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
 
   Widget _buildError() {
     return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                height: 80,
-                width: 80,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF8A65).withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.route_outlined,
-                  color: Color(0xFFFF7043),
-                  size: 40,
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'We couldn’t create your route',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF102A43),
-                  fontSize: 21,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _error ??
-                    'Something went wrong while creating the route.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  height: 1.4,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: _calculateMainRoute,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Try Again'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1677FF),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      height: 80,
+                      width: 80,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF8A65).withOpacity(0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.route_outlined,
+                        color: Color(0xFFFF7043),
+                        size: 40,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'We couldn’t create your route',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFF102A43),
+                        fontSize: 21,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _error == null
+                          ? 'Something went wrong while creating the route.'
+                          : _error!
+                                .replaceFirst('Exception: ', '')
+                                .split('\n')
+                                .first,
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        height: 1.4,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: _calculateMainRoute,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Try Again'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1677FF),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1110,15 +1049,12 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 15),
         decoration: const BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(26),
-          ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             // HANDLE
-
             Container(
               width: 38,
               height: 4,
@@ -1131,7 +1067,6 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
             const SizedBox(height: 13),
 
             // TITLE
-
             Row(
               children: [
                 const Expanded(
@@ -1168,7 +1103,6 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
             const SizedBox(height: 10),
 
             // STOP CARDS
-
             SizedBox(
               height: 112,
               child: ListView.builder(
@@ -1199,7 +1133,6 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
             const SizedBox(height: 12),
 
             // START GOOGLE MAPS NAVIGATION
-
             SizedBox(
               width: double.infinity,
               height: 52,
@@ -1209,9 +1142,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                 label: const Text('Start Navigation'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF1677FF),
-                  side: const BorderSide(
-                    color: Color(0xFF1677FF),
-                  ),
+                  side: const BorderSide(color: Color(0xFF1677FF)),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(17),
                   ),
@@ -1222,7 +1153,6 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
             const SizedBox(height: 10),
 
             // GENERATE ITINERARY
-
             SizedBox(
               width: double.infinity,
               height: 54,
@@ -1230,13 +1160,13 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                 onPressed: _saving ? null : _generateItinerary,
                 icon: _saving
                     ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: Colors.white,
-                  ),
-                )
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
                     : const Icon(Icons.auto_awesome_rounded),
                 label: Text(
                   _saving ? 'Preparing...' : 'Generate My Itinerary',
@@ -1277,9 +1207,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
         decoration: BoxDecoration(
           color: const Color(0xFFF7FAFC),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: const Color(0xFFE4EBF0),
-          ),
+          border: Border.all(color: const Color(0xFFE4EBF0)),
         ),
         child: Row(
           children: [
@@ -1290,11 +1218,7 @@ class _MapNavigationScreenState extends State<MapNavigationScreen> {
                 color: typeColor.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(
-                _getTypeIcon(point.type),
-                color: typeColor,
-                size: 20,
-              ),
+              child: Icon(_getTypeIcon(point.type), color: typeColor, size: 20),
             ),
             const SizedBox(width: 9),
             Expanded(

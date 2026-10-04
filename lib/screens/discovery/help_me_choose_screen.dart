@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class HelpMeChooseScreen extends StatefulWidget {
   const HelpMeChooseScreen({super.key});
@@ -14,7 +15,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
 
   int _currentStep = 0;
 
-  String? _experience;
+  final Set<String> _selectedExperiences = {};
   String? _travelerType;
   String? _duration;
 
@@ -134,7 +135,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
   bool get _canContinue {
     switch (_currentStep) {
       case 0:
-        return _experience != null;
+        return _selectedExperiences.isNotEmpty;
       case 1:
         return _travelerType != null;
       case 2:
@@ -149,7 +150,9 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
   void _selectChoice(String value) {
     setState(() {
       if (_currentStep == 0) {
-        _experience = value;
+        if (!_selectedExperiences.add(value)) {
+          _selectedExperiences.remove(value);
+        }
       } else if (_currentStep == 1) {
         _travelerType = value;
       } else if (_currentStep == 2) {
@@ -200,7 +203,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
       context,
       AppRoutes.destinationRecommendations,
       arguments: <String, dynamic>{
-        'experience': _experience!,
+        'experience': _selectedExperiences.join(', '),
         'travelerType': _travelerType!,
         'duration': _duration!,
         'budget': _budget,
@@ -242,7 +245,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
     final isWide = size.width >= 800;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7FAFC),
+      backgroundColor: const Color(0xFFF3F7FC),
       body: SafeArea(
         child: Column(
           children: [
@@ -269,10 +272,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
 
   Widget _buildTopBar(bool isWide) {
     return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: isWide ? 48 : 20,
-        vertical: 16,
-      ),
+      padding: EdgeInsets.symmetric(horizontal: isWide ? 48 : 20, vertical: 12),
       child: Row(
         children: [
           IconButton(
@@ -280,50 +280,67 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
             icon: const Icon(Icons.arrow_back_rounded),
             style: IconButton.styleFrom(
               backgroundColor: Colors.white,
+              foregroundColor: const Color(0xFF17466F),
+              fixedSize: const Size(44, 44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
             ),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Help me choose',
-                  style: TextStyle(
-                    color: Color(0xFF102A43),
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
-                  ),
+                Row(
+                  children: [
+                    const Text(
+                      'Help me choose',
+                      style: TextStyle(
+                        color: Color(0xFF102A43),
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 16,
+                      color: Color(0xFFFFA928),
+                    ),
+                  ],
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
-                  'Tell us your travel vibe',
-                  style: TextStyle(
-                    color: Color(0xFF627D98),
-                    fontSize: 12,
+                  _currentStep == 0
+                      ? 'Your trip, your way'
+                      : 'A few details for a better match',
+                  style: const TextStyle(
+                    color: Color(0xFF718096),
+                    fontSize: 11.5,
                   ),
                 ),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFEAF3FF),
-              borderRadius: BorderRadius.circular(30),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE2EAF3)),
             ),
             child: Text(
-              '${_currentStep + 1} of 4',
+              '0${_currentStep + 1} / 04',
               style: const TextStyle(
-                color: Color(0xFF1677FF),
-                fontSize: 12,
+                color: Color(0xFF17466F),
+                fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
             ),
           ),
+          const DashboardNavigationButton(),
         ],
       ),
     );
@@ -331,17 +348,33 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
 
   Widget _buildProgress() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: LinearProgressIndicator(
-          value: (_currentStep + 1) / 4,
-          minHeight: 5,
-          backgroundColor: const Color(0xFFE3EAF2),
-          valueColor: const AlwaysStoppedAnimation<Color>(
-            Color(0xFF1677FF),
-          ),
-        ),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+      child: Row(
+        children: List.generate(4, (index) {
+          final complete = index <= _currentStep;
+          return Expanded(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOutCubic,
+              height: 5,
+              margin: EdgeInsets.only(right: index == 3 ? 0 : 6),
+              decoration: BoxDecoration(
+                color: complete
+                    ? const Color(0xFF1677FF)
+                    : const Color(0xFFDDE7F1),
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: complete
+                    ? [
+                        BoxShadow(
+                          color: const Color(0xFF1677FF).withValues(alpha: 0.2),
+                          blurRadius: 7,
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
@@ -350,10 +383,9 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
     return _buildChoicePage(
       eyebrow: 'YOUR TRAVEL VIBE',
       title: 'What kind of trip\nsounds exciting?',
-      subtitle:
-      'Pick the experience you would love to have. You can change this later.',
+      subtitle: 'Choose all the experiences you would love to have.',
       choices: _experiences,
-      selectedValue: _experience,
+      selectedValue: _selectedExperiences.join(','),
       onSelected: _selectChoice,
       isWide: isWide,
     );
@@ -364,7 +396,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
       eyebrow: 'YOUR CREW',
       title: 'Who are you\ntravelling with?',
       subtitle:
-      'This helps TravelEase suggest destinations that fit your trip style.',
+          'This helps TravelEase suggest destinations that fit your trip style.',
       choices: _travelerTypes,
       selectedValue: _travelerType,
       onSelected: _selectChoice,
@@ -376,8 +408,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
     return _buildChoicePage(
       eyebrow: 'YOUR TIME',
       title: 'How long do you\nwant to escape?',
-      subtitle:
-      'Choose the trip length you have in mind.',
+      subtitle: 'Choose the trip length you have in mind.',
       choices: _durations,
       selectedValue: _duration,
       onSelected: _selectChoice,
@@ -388,15 +419,10 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
   Widget _buildBudgetStep(bool isWide) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.symmetric(
-        horizontal: isWide ? 48 : 20,
-        vertical: 28,
-      ),
+      padding: EdgeInsets.fromLTRB(isWide ? 48 : 20, 24, isWide ? 48 : 20, 28),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: 760,
-          ),
+          constraints: const BoxConstraints(maxWidth: 760),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -415,7 +441,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
               const SizedBox(height: 12),
               const Text(
                 'Set an approximate total budget for your trip. '
-                    'We will use it when suggesting destinations.',
+                'We will use it when suggesting destinations.',
                 style: TextStyle(
                   color: Color(0xFF627D98),
                   fontSize: 14,
@@ -428,15 +454,13 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(
-                    color: const Color(0xFFE1EAF2),
-                  ),
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(color: const Color(0xFFE2EAF3)),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
+                      color: const Color(0xFF17466F).withValues(alpha: 0.07),
                       blurRadius: 24,
-                      offset: const Offset(0, 10),
+                      offset: const Offset(0, 12),
                     ),
                   ],
                 ),
@@ -446,14 +470,11 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
                       width: 68,
                       height: 68,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF3D6),
-                        borderRadius: BorderRadius.circular(20),
+                        color: const Color(0xFFFFF4D9),
+                        borderRadius: BorderRadius.circular(22),
                       ),
                       child: const Center(
-                        child: Text(
-                          '💰',
-                          style: TextStyle(fontSize: 34),
-                        ),
+                        child: Text('💰', style: TextStyle(fontSize: 34)),
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -461,8 +482,9 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
                       _formatBudget(),
                       style: const TextStyle(
                         color: Color(0xFF102A43),
-                        fontSize: 38,
+                        fontSize: 42,
                         fontWeight: FontWeight.w900,
+                        letterSpacing: -1.2,
                       ),
                     ),
                     const SizedBox(height: 6),
@@ -522,15 +544,12 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
                 ),
                 child: const Row(
                   children: [
-                    Icon(
-                      Icons.auto_awesome_rounded,
-                      color: Color(0xFF1677FF),
-                    ),
+                    Icon(Icons.auto_awesome_rounded, color: Color(0xFF1677FF)),
                     SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         'Your budget is used as a guide. '
-                            'You can always adjust the plan later.',
+                        'You can always adjust the plan later.',
                         style: TextStyle(
                           color: Color(0xFF486581),
                           fontSize: 12.5,
@@ -559,54 +578,116 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
   }) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.symmetric(
-        horizontal: isWide ? 48 : 20,
-        vertical: 28,
-      ),
+      padding: EdgeInsets.fromLTRB(isWide ? 48 : 20, 26, isWide ? 48 : 20, 30),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: 850,
-          ),
+          constraints: const BoxConstraints(maxWidth: 850),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildEyebrow(eyebrow),
-              const SizedBox(height: 12),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Color(0xFF102A43),
-                  fontSize: 34,
-                  height: 1.08,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -1,
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFEAF4FF), Color(0xFFF5FAFF)],
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: const Color(0xFFDDEBFA)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildEyebrow(eyebrow),
+                    const SizedBox(height: 13),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Color(0xFF102A43),
+                        fontSize: 32,
+                        height: 1.08,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.9,
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0xFF627D98),
+                        fontSize: 13.5,
+                        height: 1.5,
+                      ),
+                    ),
+                    if (_currentStep == 0) ...[
+                      const SizedBox(height: 14),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        child: _selectedExperiences.isEmpty
+                            ? const Text(
+                                'Pick as many as you like',
+                                key: ValueKey('experience-hint'),
+                                style: TextStyle(
+                                  color: Color(0xFF1677FF),
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              )
+                            : Wrap(
+                                key: ValueKey(_selectedExperiences.join('|')),
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: _selectedExperiences
+                                    .map(
+                                      (experience) => Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 9,
+                                          vertical: 5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
+                                          border: Border.all(
+                                            color: const Color(0xFFC9DFF5),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          experience,
+                                          style: const TextStyle(
+                                            color: Color(0xFF17466F),
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                  color: Color(0xFF627D98),
-                  fontSize: 14,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 18),
               GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: choices.length,
-                gridDelegate:
-                SliverGridDelegateWithFixedCrossAxisCount(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: isWide ? 2 : 1,
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 14,
-                  childAspectRatio: isWide ? 2.6 : 2.8,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: isWide ? 2.75 : 3.0,
                 ),
                 itemBuilder: (context, index) {
                   final choice = choices[index];
-                  final selected = selectedValue == choice.title;
+                  final selected = (selectedValue ?? '')
+                      .split(',')
+                      .contains(choice.title);
 
                   return _buildChoiceCard(
                     choice: choice,
@@ -627,106 +708,125 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
     required bool selected,
     required VoidCallback onTap,
   }) {
-    return AnimatedContainer(
+    return AnimatedScale(
       duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOut,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: selected
-              ? const Color(0xFF1677FF)
-              : const Color(0xFFE1EAF2),
-          width: selected ? 2 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: selected
-                ? const Color(0xFF1677FF).withOpacity(0.10)
-                : Colors.black.withOpacity(0.035),
-            blurRadius: selected ? 18 : 12,
-            offset: const Offset(0, 7),
+      curve: Curves.easeOutBack,
+      scale: selected ? 1.015 : 1,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFF9FCFF) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? const Color(0xFF3389F5) : const Color(0xFFE2EAF2),
+            width: selected ? 1.7 : 1,
           ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(22),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    color: choice.color,
-                    borderRadius: BorderRadius.circular(17),
-                  ),
-                  child: Center(
-                    child: Text(
-                      choice.emoji,
-                      style: const TextStyle(fontSize: 28),
+          boxShadow: [
+            BoxShadow(
+              color: selected
+                  ? const Color(0xFF1677FF).withValues(alpha: 0.12)
+                  : const Color(0xFF16324F).withValues(alpha: 0.045),
+              blurRadius: selected ? 18 : 12,
+              offset: Offset(0, selected ? 7 : 5),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+              child: Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      color: choice.color,
+                      borderRadius: BorderRadius.circular(17),
+                    ),
+                    child: Center(
+                      child: AnimatedScale(
+                        duration: const Duration(milliseconds: 220),
+                        scale: selected ? 1.12 : 1,
+                        curve: Curves.easeOutBack,
+                        child: Text(
+                          choice.emoji,
+                          style: const TextStyle(fontSize: 27),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        choice.title,
-                        style: const TextStyle(
-                          color: Color(0xFF102A43),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          choice.title,
+                          style: const TextStyle(
+                            color: Color(0xFF102A43),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        choice.subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF829AB1),
-                          fontSize: 11.5,
-                          height: 1.3,
+                        const SizedBox(height: 3),
+                        Text(
+                          choice.subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF829AB1),
+                            fontSize: 11,
+                            height: 1.3,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: selected
-                        ? const Color(0xFF1677FF)
-                        : Colors.transparent,
-                    border: Border.all(
+                  const SizedBox(width: 10),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
                       color: selected
                           ? const Color(0xFF1677FF)
-                          : const Color(0xFFBCCCDC),
-                      width: 2,
+                          : Colors.transparent,
+                      border: Border.all(
+                        color: selected
+                            ? const Color(0xFF1677FF)
+                            : const Color(0xFFBCCCDC),
+                        width: 2,
+                      ),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      transitionBuilder: (child, animation) {
+                        return ScaleTransition(scale: animation, child: child);
+                      },
+                      child: selected
+                          ? const Icon(
+                              Icons.check_rounded,
+                              key: ValueKey('selected'),
+                              size: 17,
+                              color: Colors.white,
+                            )
+                          : const SizedBox(
+                              key: ValueKey('unselected'),
+                              width: 17,
+                              height: 17,
+                            ),
                     ),
                   ),
-                  child: selected
-                      ? const Icon(
-                    Icons.check_rounded,
-                    size: 17,
-                    color: Colors.white,
-                  )
-                      : null,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -736,10 +836,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
 
   Widget _buildEyebrow(String text) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 11,
-        vertical: 7,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xFFEAF3FF),
         borderRadius: BorderRadius.circular(30),
@@ -758,22 +855,13 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
 
   Widget _buildBottomBar(bool isWide) {
     return Container(
-      padding: EdgeInsets.fromLTRB(
-        isWide ? 48 : 20,
-        12,
-        isWide ? 48 : 20,
-        16,
-      ),
+      padding: EdgeInsets.fromLTRB(isWide ? 48 : 20, 12, isWide ? 48 : 20, 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: const Border(
-          top: BorderSide(
-            color: Color(0xFFE7EEF5),
-          ),
-        ),
+        border: const Border(top: BorderSide(color: Color(0xFFE7EEF5))),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 18,
             offset: const Offset(0, -5),
           ),
@@ -781,9 +869,7 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
       ),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: 850,
-          ),
+          constraints: const BoxConstraints(maxWidth: 850),
           child: Row(
             children: [
               if (_currentStep > 0)
@@ -792,30 +878,41 @@ class _HelpMeChooseScreenState extends State<HelpMeChooseScreen> {
                   icon: const Icon(Icons.arrow_back_rounded),
                   label: const Text('Back'),
                 ),
-              if (_currentStep > 0)
-                const SizedBox(width: 12),
+              if (_currentStep > 0) const SizedBox(width: 12),
               Expanded(
                 child: FilledButton(
                   onPressed: _canContinue ? _next : null,
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF1677FF),
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor:
-                    const Color(0xFFD9E4EF),
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 16,
-                    ),
+                    disabledBackgroundColor: const Color(0xFFD9E4EF),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(17),
                     ),
+                    elevation: 0,
                   ),
-                  child: Text(
-                    _currentStep == 3
-                        ? 'Find My Destinations ✨'
-                        : 'Continue',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                    ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: Text(
+                          _currentStep == 3
+                              ? 'Find My Destinations'
+                              : 'Continue',
+                          key: ValueKey(_currentStep),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        _currentStep == 3
+                            ? Icons.auto_awesome_rounded
+                            : Icons.arrow_forward_rounded,
+                        size: 18,
+                      ),
+                    ],
                   ),
                 ),
               ),

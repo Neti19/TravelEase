@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/trip_member_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 extension TripMemberServiceJoinExtension on TripMemberService {
 Future<String> joinTripByCode(String tripCode) async {
@@ -209,6 +210,7 @@ style: TextStyle(
 fontWeight: FontWeight.w800,
 ),
 ),
+actions: const [DashboardNavigationButton()],
 ),
 body: SafeArea(
 child: SingleChildScrollView(

@@ -19,8 +19,6 @@ import 'screens/planning/restaurant_selection_screen.dart';
 // Itinerary Screens
 import 'screens/itinerary/generate_itinerary_screen.dart';
 import 'screens/itinerary/day_wise_itinerary_screen.dart';
-//import 'screens/itinerary/customize_itinerary_screen.dart';
-import 'screens/itinerary/notifications_screen.dart';
 
 // Map Screen
 import 'screens/map/map_navigation_screen.dart';
@@ -53,10 +51,6 @@ class AppRoutes {
       '/generate-itinerary';
   static const String dayWiseItinerary =
       '/day-wise-itinerary';
-  static const String customizeItinerary =
-      '/customize-itinerary';
-  static const String notifications =
-      '/notifications';
   static const String mapNavigation =
       '/map-navigation';
   static const String expenseTracker =
@@ -315,12 +309,6 @@ class AppRoutes {
                 tripId: tripId,
               ),
           settings: settings,
-        );
-
-      case notifications:
-        return MaterialPageRoute(
-          builder: (_) =>
-          const NotificationsScreen(),
         );
 
       case expenseTracker:

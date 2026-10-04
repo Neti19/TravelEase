@@ -16,9 +16,7 @@ class DestinationRecommendationService {
     final apiKey = dotenv.env['PLACES_API_KEY'];
 
     if (apiKey == null || apiKey.trim().isEmpty) {
-      throw Exception(
-        'PLACES_API_KEY is missing from the .env file.',
-      );
+      throw Exception('PLACES_API_KEY is missing from the .env file.');
     }
 
     final queries = _buildQueries(
@@ -31,10 +29,7 @@ class DestinationRecommendationService {
     final Map<String, Map<String, dynamic>> uniquePlaces = {};
 
     for (final query in queries) {
-      final results = await _searchPlaces(
-        query: query,
-        apiKey: apiKey,
-      );
+      final results = await _searchPlaces(query: query, apiKey: apiKey);
 
       for (final place in results) {
         final placeId = place['id']?.toString();
@@ -50,19 +45,17 @@ class DestinationRecommendationService {
     final destinations = uniquePlaces.values
         .map(
           (place) => _convertToDestination(
-        place,
-        experience: experience,
-        travelerType: travelerType,
-        duration: duration,
-        budget: budget,
-      ),
-    )
+            place,
+            experience: experience,
+            travelerType: travelerType,
+            duration: duration,
+            budget: budget,
+          ),
+        )
         .whereType<RecommendedDestination>()
         .toList();
 
-    destinations.sort(
-          (a, b) => b.score.compareTo(a.score),
-    );
+    destinations.sort((a, b) => b.score.compareTo(a.score));
 
     return destinations.take(8).toList();
   }
@@ -97,7 +90,7 @@ class DestinationRecommendationService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'Google Places API error '
-            '(${response.statusCode}): ${response.body}',
+        '(${response.statusCode}): ${response.body}',
       );
     }
 
@@ -115,9 +108,7 @@ class DestinationRecommendationService {
 
     return places
         .whereType<Map>()
-        .map(
-          (place) => Map<String, dynamic>.from(place),
-    )
+        .map((place) => Map<String, dynamic>.from(place))
         .toList();
   }
 
@@ -141,6 +132,15 @@ class DestinationRecommendationService {
   }
 
   String _experienceQuery(String experience) {
+    return experience
+        .split(',')
+        .map((item) => _singleExperienceQuery(item.trim()))
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .join(' ');
+  }
+
+  String _singleExperienceQuery(String experience) {
     switch (experience.toLowerCase()) {
       case 'beach':
         return 'beach coastal tropical';
@@ -214,12 +214,12 @@ class DestinationRecommendationService {
   }
 
   RecommendedDestination? _convertToDestination(
-      Map<String, dynamic> place, {
-        required String experience,
-        required String travelerType,
-        required String duration,
-        required double budget,
-      }) {
+    Map<String, dynamic> place, {
+    required String experience,
+    required String travelerType,
+    required String duration,
+    required double budget,
+  }) {
     final id = place['id']?.toString();
 
     final displayName = place['displayName'];
@@ -239,17 +239,12 @@ class DestinationRecommendationService {
     final rating = _toDouble(place['rating']);
     final reviewCount = _toInt(place['userRatingCount']);
 
-    final address =
-        place['formattedAddress']?.toString() ?? '';
+    final address = place['formattedAddress']?.toString() ?? '';
 
-    final primaryType =
-        place['primaryType']?.toString() ?? '';
+    final primaryType = place['primaryType']?.toString() ?? '';
 
     final types = place['types'] is List
-        ? List<String>.from(
-      (place['types'] as List)
-          .whereType<String>(),
-    )
+        ? List<String>.from((place['types'] as List).whereType<String>())
         : <String>[];
 
     final location = place['location'];
@@ -301,30 +296,22 @@ class DestinationRecommendationService {
 
     // Popularity contributes up to 20 points.
     if (reviewCount > 0) {
-      final popularity =
-          (reviewCount.clamp(0, 5000) / 5000) * 20;
+      final popularity = (reviewCount.clamp(0, 5000) / 5000) * 20;
 
       score += popularity;
     }
 
     final keywords = _experienceKeywords(experience);
 
-    final searchableText = [
-      primaryType,
-      ...types,
-    ].join(' ').toLowerCase();
+    final searchableText = [primaryType, ...types].join(' ').toLowerCase();
 
     // Experience relevance contributes up to 30 points.
     final matchingKeywords = keywords
-        .where(
-          (keyword) =>
-          searchableText.contains(keyword.toLowerCase()),
-    )
+        .where((keyword) => searchableText.contains(keyword.toLowerCase()))
         .length;
 
     if (keywords.isNotEmpty) {
-      score +=
-          (matchingKeywords / keywords.length) * 30;
+      score += (matchingKeywords / keywords.length) * 30;
     }
 
     // Small quality bonus for highly rated places.
@@ -337,73 +324,38 @@ class DestinationRecommendationService {
   }
 
   List<String> _experienceKeywords(String experience) {
+    return experience
+        .split(',')
+        .expand((item) => _singleExperienceKeywords(item.trim()))
+        .toSet()
+        .toList();
+  }
+
+  List<String> _singleExperienceKeywords(String experience) {
     switch (experience.toLowerCase()) {
       case 'beach':
-        return [
-          'beach',
-          'coast',
-          'island',
-          'resort',
-        ];
+        return ['beach', 'coast', 'island', 'resort'];
 
       case 'adventure':
-        return [
-          'adventure',
-          'park',
-          'camp',
-          'hiking',
-          'sport',
-        ];
+        return ['adventure', 'park', 'camp', 'hiking', 'sport'];
 
       case 'nature':
-        return [
-          'park',
-          'nature',
-          'mountain',
-          'forest',
-          'wildlife',
-        ];
+        return ['park', 'nature', 'mountain', 'forest', 'wildlife'];
 
       case 'food':
-        return [
-          'restaurant',
-          'food',
-          'cafe',
-          'bakery',
-        ];
+        return ['restaurant', 'food', 'cafe', 'bakery'];
 
       case 'culture':
-        return [
-          'museum',
-          'historical',
-          'heritage',
-          'temple',
-          'church',
-        ];
+        return ['museum', 'historical', 'heritage', 'temple', 'church'];
 
       case 'nightlife':
-        return [
-          'bar',
-          'nightclub',
-          'entertainment',
-          'casino',
-        ];
+        return ['bar', 'nightclub', 'entertainment', 'casino'];
 
       case 'shopping':
-        return [
-          'shopping',
-          'mall',
-          'market',
-          'store',
-        ];
+        return ['shopping', 'mall', 'market', 'store'];
 
       case 'relaxation':
-        return [
-          'spa',
-          'resort',
-          'wellness',
-          'hotel',
-        ];
+        return ['spa', 'resort', 'wellness', 'hotel'];
 
       default:
         return [];

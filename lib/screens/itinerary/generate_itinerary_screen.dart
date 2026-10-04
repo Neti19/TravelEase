@@ -1,32 +1,106 @@
 import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
-import '../../models/itinerary.dart';
 import '../../services/itinerary_generator_service.dart';
+import '../../services/trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class GenerateItineraryScreen extends StatefulWidget {
   final String tripId;
 
-  const GenerateItineraryScreen({
-    super.key,
-    required this.tripId,
-  });
+  const GenerateItineraryScreen({super.key, required this.tripId});
 
   @override
   State<GenerateItineraryScreen> createState() =>
       _GenerateItineraryScreenState();
 }
 
-class _GenerateItineraryScreenState
-    extends State<GenerateItineraryScreen> {
+class _GenerateItineraryScreenState extends State<GenerateItineraryScreen> {
   final ItineraryGeneratorService _generatorService =
-  ItineraryGeneratorService();
+      ItineraryGeneratorService();
+  final TripService _tripService = TripService();
 
   bool _generating = true;
 
   String? _error;
 
-  FullItinerary? _itinerary;
+  Future<void> _editTripDays() async {
+    try {
+      final trip = await _tripService.getTrip(widget.tripId);
+      if (trip == null) {
+        throw Exception('Trip not found.');
+      }
+      if (!mounted) return;
+
+      final controller = TextEditingController(
+        text: trip.numberOfDays.toString(),
+      );
+      final formKey = GlobalKey<FormState>();
+      final updatedDays = await showDialog<int>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Edit trip duration'),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Number of days',
+                suffixText: 'days',
+              ),
+              validator: (value) {
+                final days = int.tryParse(value?.trim() ?? '');
+                if (days == null || days < 1) {
+                  return 'Enter at least 1 day.';
+                }
+                return null;
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (formKey.currentState?.validate() != true) return;
+                Navigator.pop(
+                  dialogContext,
+                  int.parse(controller.text.trim()),
+                );
+              },
+              child: const Text('Save and generate'),
+            ),
+          ],
+        ),
+      );
+      controller.dispose();
+
+      if (updatedDays == null || !mounted) return;
+
+      final endDate = DateTime(
+        trip.startDate.year,
+        trip.startDate.month,
+        trip.startDate.day,
+      ).add(Duration(days: updatedDays - 1));
+      await _tripService.updateTrip(widget.tripId, {
+        'numberOfDays': updatedDays,
+        'endDate': endDate.toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+
+      await _generate();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _generating = false;
+        _error = 'Could not update trip duration: $e';
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -39,15 +113,11 @@ class _GenerateItineraryScreenState
       setState(() {
         _generating = true;
         _error = null;
-        _itinerary = null;
       });
     }
 
     try {
-      final itinerary =
-      await _generatorService.generateForTrip(
-        widget.tripId,
-      );
+      await _generatorService.generateForTrip(widget.tripId);
 
       if (!mounted) return;
 
@@ -62,9 +132,7 @@ class _GenerateItineraryScreenState
       Navigator.pushReplacementNamed(
         context,
         AppRoutes.dayWiseItinerary,
-        arguments: {
-          'tripId': widget.tripId,
-        },
+        arguments: {'tripId': widget.tripId},
       );
     } catch (e) {
       if (!mounted) return;
@@ -80,9 +148,20 @@ class _GenerateItineraryScreenState
     final error = (_error ?? '').toLowerCase();
 
     return error.contains('not enough time') ||
+        error.contains('not enough practical time') ||
+        error.contains('schedule all selected tourist places') ||
         error.contains('cannot fit') ||
-        error.contains('fit into') ||
-        error.contains('selected places');
+        error.contains('could not fit') ||
+        error.contains('fit into');
+  }
+
+  String get _displayError {
+    final error = (_error ?? '').trim();
+    if (error.isEmpty) {
+      return 'Something went wrong while preparing your trip. You can try again.';
+    }
+
+    return error.replaceFirst(RegExp(r'^(Exception|StateError):\s*'), '');
   }
 
   @override
@@ -99,6 +178,7 @@ class _GenerateItineraryScreenState
         ),
         backgroundColor: const Color(0xFFF7FAFC),
         foregroundColor: const Color(0xFF102A43),
+        actions: const [DashboardNavigationButton()],
       ),
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 300),
@@ -116,13 +196,16 @@ class _GenerateItineraryScreenState
   // ---------------------------------------------------------------------------
 
   Widget _buildGenerating() {
-    return Center(
-      key: const ValueKey('generating'),
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        key: const ValueKey('generating'),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
             Container(
               width: 92,
               height: 92,
@@ -159,10 +242,7 @@ class _GenerateItineraryScreenState
             ),
             const SizedBox(height: 24),
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 11,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
@@ -170,11 +250,7 @@ class _GenerateItineraryScreenState
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.route_rounded,
-                    size: 18,
-                    color: Color(0xFF1677FF),
-                  ),
+                  Icon(Icons.route_rounded, size: 18, color: Color(0xFF1677FF)),
                   SizedBox(width: 8),
                   Text(
                     'Optimizing your route',
@@ -187,7 +263,9 @@ class _GenerateItineraryScreenState
                 ],
               ),
             ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -212,12 +290,7 @@ class _GenerateItineraryScreenState
   Widget _buildPlanningAdjustment() {
     return SingleChildScrollView(
       key: const ValueKey('planning-adjustment'),
-      padding: const EdgeInsets.fromLTRB(
-        20,
-        24,
-        20,
-        30,
-      ),
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 30),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -284,10 +357,8 @@ class _GenerateItineraryScreenState
             iconColor: const Color(0xFF1677FF),
             title: 'Increase trip days',
             subtitle:
-            'Give yourself more time to explore the places you selected.',
-            onTap: () {
-              Navigator.pop(context);
-            },
+                'Give yourself more time to explore the places you selected.',
+            onTap: _editTripDays,
           ),
 
           const SizedBox(height: 12),
@@ -298,14 +369,12 @@ class _GenerateItineraryScreenState
             iconColor: const Color(0xFFFF8A65),
             title: 'Edit selected places',
             subtitle:
-            'Remove a few places or choose different places for your trip.',
+                'Remove a few places or choose different places for your trip.',
             onTap: () {
               Navigator.pushNamed(
                 context,
                 AppRoutes.touristSpots,
-                arguments: {
-                  'tripId': widget.tripId,
-                },
+                arguments: {'tripId': widget.tripId},
               );
             },
           ),
@@ -318,7 +387,7 @@ class _GenerateItineraryScreenState
             iconColor: const Color(0xFFE3A900),
             title: 'Review your trip',
             subtitle:
-            'Go back and change the trip duration before generating again.',
+                'Go back and change the trip duration before generating again.',
             onTap: () {
               Navigator.pop(context);
               Navigator.pop(context);
@@ -334,18 +403,14 @@ class _GenerateItineraryScreenState
               onPressed: _generate,
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFF1677FF),
-                side: const BorderSide(
-                  color: Color(0xFF1677FF),
-                ),
+                side: const BorderSide(color: Color(0xFF1677FF)),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(15),
                 ),
               ),
               child: const Text(
                 'Try Generating Again',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
           ),
@@ -359,13 +424,16 @@ class _GenerateItineraryScreenState
   // ---------------------------------------------------------------------------
 
   Widget _buildGeneralError() {
-    return Center(
-      key: const ValueKey('general-error'),
-      child: Padding(
-        padding: const EdgeInsets.all(26),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        key: const ValueKey('general-error'),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Padding(
+            padding: const EdgeInsets.all(26),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
             Container(
               width: 82,
               height: 82,
@@ -394,10 +462,10 @@ class _GenerateItineraryScreenState
 
             const SizedBox(height: 10),
 
-            const Text(
-              'Something went wrong while preparing your trip. You can try again.',
+            Text(
+              _displayError,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Color(0xFF627D98),
                 fontSize: 14,
                 height: 1.5,
@@ -412,18 +480,14 @@ class _GenerateItineraryScreenState
               child: FilledButton(
                 onPressed: _generate,
                 style: FilledButton.styleFrom(
-                  backgroundColor:
-                  const Color(0xFF1677FF),
+                  backgroundColor: const Color(0xFF1677FF),
                   shape: RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(15),
                   ),
                 ),
                 child: const Text(
                   'Try Again',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -438,25 +502,21 @@ class _GenerateItineraryScreenState
                   Navigator.pop(context);
                 },
                 style: OutlinedButton.styleFrom(
-                  foregroundColor:
-                  const Color(0xFF486581),
-                  side: const BorderSide(
-                    color: Color(0xFFD9E2EC),
-                  ),
+                  foregroundColor: const Color(0xFF486581),
+                  side: const BorderSide(color: Color(0xFFD9E2EC)),
                   shape: RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(15),
                   ),
                 ),
                 child: const Text(
                   'Go Back',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -489,20 +549,14 @@ class _GenerateItineraryScreenState
                 height: 48,
                 decoration: BoxDecoration(
                   color: iconBackground,
-                  borderRadius:
-                  BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  icon,
-                  color: iconColor,
-                  size: 24,
-                ),
+                child: Icon(icon, color: iconColor, size: 24),
               ),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,

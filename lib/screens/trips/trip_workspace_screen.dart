@@ -3,26 +3,24 @@ import 'package:flutter/material.dart';
 import '../../app_routes.dart';
 import '../../models/trip.dart';
 import '../../services/trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class TripWorkspaceScreen extends StatefulWidget {
   final String tripId;
 
-  const TripWorkspaceScreen({
-    super.key,
-    required this.tripId,
-  });
+  const TripWorkspaceScreen({super.key, required this.tripId});
 
   @override
-  State<TripWorkspaceScreen> createState() =>
-      _TripWorkspaceScreenState();
+  State<TripWorkspaceScreen> createState() => _TripWorkspaceScreenState();
 }
 
-class _TripWorkspaceScreenState
-    extends State<TripWorkspaceScreen> {
+class _TripWorkspaceScreenState extends State<TripWorkspaceScreen> {
   final TripService _tripService = TripService();
 
   Trip? _trip;
+  bool _isOwner = false;
   bool _loading = true;
+  bool _deleting = false;
   String? _error;
 
   @override
@@ -40,22 +38,22 @@ class _TripWorkspaceScreenState
         });
       }
 
-      final trip =
-      await _tripService.getTrip(widget.tripId);
+      final trip = await _tripService.getTrip(widget.tripId);
+      final isOwner = await _tripService.isTripOwner(widget.tripId);
 
       if (!mounted) return;
 
       if (trip == null) {
         setState(() {
           _loading = false;
-          _error =
-          'This trip could not be found.';
+          _error = 'This trip could not be found.';
         });
         return;
       }
 
       setState(() {
         _trip = trip;
+        _isOwner = isOwner;
         _loading = false;
       });
     } catch (e) {
@@ -72,12 +70,76 @@ class _TripWorkspaceScreenState
     Navigator.pushNamed(
       context,
       route,
-      arguments: {
-        'tripId': widget.tripId,
-      },
+      arguments: {'tripId': widget.tripId},
     ).then((_) {
       _loadTrip();
     });
+  }
+
+  Future<void> _deleteTrip() async {
+    if (!_canDeleteTrip || _deleting) return;
+
+    final trip = _trip!;
+    final tripName = trip.name.trim().isEmpty
+        ? (trip.destination.trim().isEmpty ? 'this trip' : trip.destination)
+        : trip.name;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Delete Trip?',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        content: Text('Are you sure you want to delete "$tripName"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFE5484D),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _deleting = true;
+    });
+
+    try {
+      await _tripService.deleteTrip(widget.tripId);
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete trip: $e'),
+            behavior: SnackBarBehavior.fixed,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deleting = false;
+        });
+      }
+    }
+  }
+
+  bool get _canDeleteTrip {
+    final trip = _trip;
+    if (!_isOwner || trip == null) return false;
+    final status = _tripStatus(trip);
+    return status == 'Planning' || status == 'Upcoming';
   }
 
   // ------------------------------------------------------------
@@ -87,30 +149,37 @@ class _TripWorkspaceScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-      const Color(0xFFF7FAFC),
+      backgroundColor: const Color(0xFFF7FAFC),
       appBar: AppBar(
-        backgroundColor:
-        const Color(0xFFF7FAFC),
-        foregroundColor:
-        const Color(0xFF102A43),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        foregroundColor: const Color(0xFF102A43),
         elevation: 0,
         titleSpacing: 20,
         title: const Text(
-          'Trip Workspace',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 21,
-          ),
+          'Trip workspace',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 21),
         ),
         actions: [
+          if (_canDeleteTrip)
+            IconButton(
+              onPressed: _deleting ? null : _deleteTrip,
+              tooltip: 'Delete trip',
+              color: const Color(0xFFE5484D),
+              icon: _deleting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline_rounded),
+            ),
           IconButton(
             onPressed: _loadTrip,
             tooltip: 'Refresh',
-            icon: const Icon(
-              Icons.refresh_rounded,
-            ),
+            icon: const Icon(Icons.refresh_rounded),
           ),
+          const DashboardNavigationButton(),
           const SizedBox(width: 8),
         ],
       ),
@@ -121,9 +190,7 @@ class _TripWorkspaceScreenState
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF1677FF),
-        ),
+        child: CircularProgressIndicator(color: Color(0xFF1677FF)),
       );
     }
 
@@ -133,71 +200,61 @@ class _TripWorkspaceScreenState
 
     final trip = _trip!;
 
-    final tripTitle =
-    trip.name.trim().isEmpty
-        ? (trip.destination.trim().isEmpty
-        ? 'My Trip'
-        : trip.destination)
+    final tripTitle = trip.name.trim().isEmpty
+        ? (trip.destination.trim().isEmpty ? 'My Trip' : trip.destination)
         : trip.name;
 
-    final destination =
-    trip.destination.trim().isEmpty
+    final destination = trip.destination.trim().isEmpty
         ? 'Destination not selected'
         : trip.destination;
 
     return RefreshIndicator(
       color: const Color(0xFF1677FF),
       onRefresh: _loadTrip,
-      child: SingleChildScrollView(
-        physics:
-        const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(
-          20,
-          8,
-          20,
-          40,
-        ),
-        child: Column(
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
-          children: [
-            _buildTripHero(
-              trip,
-              tripTitle,
-              destination,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 940),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildTripHero(trip, tripTitle, destination),
+
+                const SizedBox(height: 18),
+
+                _buildProgressSection(trip),
+
+                const SizedBox(height: 28),
+
+                _buildSectionHeading(
+                  'Build your trip',
+                  'Choose what you want to plan next.',
+                ),
+
+                const SizedBox(height: 14),
+
+                _buildPlanningGrid(),
+
+                const SizedBox(height: 28),
+
+                _buildJourneySection(),
+
+                const SizedBox(height: 28),
+
+                _buildPeopleMoneySection(),
+
+                const SizedBox(height: 26),
+
+                _buildPreferencesTile(),
+
+                const SizedBox(height: 26),
+
+                _buildTripDetails(trip),
+              ],
             ),
-
-            const SizedBox(height: 20),
-
-            _buildProgressSection(trip),
-
-            const SizedBox(height: 26),
-
-            _buildSectionHeading(
-              'Build your trip',
-              'Set up the pieces that make your journey yours.',
-            ),
-
-            const SizedBox(height: 14),
-
-            _buildPlanningGrid(),
-
-            const SizedBox(height: 28),
-
-            _buildJourneySection(),
-
-            const SizedBox(height: 28),
-
-            _buildPeopleMoneySection(),
-
-            const SizedBox(height: 26),
-
-            _buildPreferencesTile(),
-
-            const SizedBox(height: 26),
-
-            _buildTripDetails(trip),
-          ],
+          ),
         ),
       ),
     );
@@ -207,14 +264,9 @@ class _TripWorkspaceScreenState
   // HERO
   // ------------------------------------------------------------
 
-  Widget _buildTripHero(
-      Trip trip,
-      String tripTitle,
-      String destination,
-      ) {
+  Widget _buildTripHero(Trip trip, String tripTitle, String destination) {
     final status = _tripStatus(trip);
-    final statusData =
-    _statusStyle(status);
+    final statusData = _statusStyle(status);
 
     return Container(
       width: double.infinity,
@@ -223,17 +275,12 @@ class _TripWorkspaceScreenState
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF1677FF),
-            Color(0xFF0757C9),
-          ],
+          colors: [Color(0xFF124B83), Color(0xFF1677FF)],
         ),
-        borderRadius:
-        BorderRadius.circular(27),
+        borderRadius: BorderRadius.circular(27),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1677FF)
-                .withValues(alpha: 0.20),
+            color: const Color(0xFF1677FF).withValues(alpha: 0.20),
             blurRadius: 22,
             offset: const Offset(0, 10),
           ),
@@ -249,8 +296,7 @@ class _TripWorkspaceScreenState
               height: 140,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white
-                    .withValues(alpha: 0.07),
+                color: Colors.white.withValues(alpha: 0.07),
               ),
             ),
           ),
@@ -262,14 +308,12 @@ class _TripWorkspaceScreenState
               height: 115,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white
-                    .withValues(alpha: 0.06),
+                color: Colors.white.withValues(alpha: 0.06),
               ),
             ),
           ),
           Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
@@ -277,10 +321,8 @@ class _TripWorkspaceScreenState
                     width: 47,
                     height: 47,
                     decoration: BoxDecoration(
-                      color: Colors.white
-                          .withValues(alpha: 0.15),
-                      borderRadius:
-                      BorderRadius.circular(15),
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(15),
                     ),
                     child: const Icon(
                       Icons.flight_takeoff_rounded,
@@ -290,22 +332,18 @@ class _TripWorkspaceScreenState
                   ),
                   const Spacer(),
                   Container(
-                    padding:
-                    const EdgeInsets.symmetric(
+                    padding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.white
-                          .withValues(alpha: 0.15),
-                      borderRadius:
-                      BorderRadius.circular(20),
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
                     ),
                     child: Row(
                       children: [
                         Icon(
-                          statusData['icon']
-                          as IconData,
+                          statusData['icon'] as IconData,
                           size: 13,
                           color: Colors.white,
                         ),
@@ -315,8 +353,7 @@ class _TripWorkspaceScreenState
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10.5,
-                            fontWeight:
-                            FontWeight.w800,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ],
@@ -330,8 +367,7 @@ class _TripWorkspaceScreenState
               Text(
                 tripTitle,
                 maxLines: 2,
-                overflow:
-                TextOverflow.ellipsis,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 26,
@@ -354,13 +390,11 @@ class _TripWorkspaceScreenState
                     child: Text(
                       destination,
                       maxLines: 1,
-                      overflow:
-                      TextOverflow.ellipsis,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 13,
-                        fontWeight:
-                        FontWeight.w600,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -378,42 +412,30 @@ class _TripWorkspaceScreenState
   }
 
   Widget _buildHeroRoute(Trip trip) {
-    final start =
-    trip.startLocation.trim().isEmpty
+    final start = trip.startLocation.trim().isEmpty
         ? 'Starting point'
         : trip.startLocation.trim();
 
-    final destination =
-    trip.destination.trim().isEmpty
+    final destination = trip.destination.trim().isEmpty
         ? 'Destination'
         : trip.destination.trim();
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white
-            .withValues(alpha: 0.10),
-        borderRadius:
-        BorderRadius.circular(17),
-        border: Border.all(
-          color: Colors.white
-              .withValues(alpha: 0.10),
-        ),
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.my_location_rounded,
-            size: 16,
-            color: Colors.white,
-          ),
+          const Icon(Icons.my_location_rounded, size: 16, color: Colors.white),
           const SizedBox(width: 7),
           Expanded(
             child: Text(
               start,
               maxLines: 1,
-              overflow:
-              TextOverflow.ellipsis,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10.5,
@@ -433,8 +455,7 @@ class _TripWorkspaceScreenState
               destination,
               maxLines: 1,
               textAlign: TextAlign.end,
-              overflow:
-              TextOverflow.ellipsis,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10.5,
@@ -458,30 +479,22 @@ class _TripWorkspaceScreenState
   // ------------------------------------------------------------
 
   Widget _buildProgressSection(Trip trip) {
-    final hasDestination =
-        trip.destination.trim().isNotEmpty;
+    final hasDestination = trip.destination.trim().isNotEmpty;
 
-    final hasStart =
-        trip.startLocation.trim().isNotEmpty;
+    final hasStart = trip.startLocation.trim().isNotEmpty;
 
-    final completedSteps =
-        (hasStart ? 1 : 0) +
-            (hasDestination ? 1 : 0);
+    final completedSteps = (hasStart ? 1 : 0) + (hasDestination ? 1 : 0);
 
     const totalSteps = 5;
 
-    final progress =
-        completedSteps / totalSteps;
+    final progress = completedSteps / totalSteps;
 
     return Container(
       padding: const EdgeInsets.all(17),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF8E7),
-        borderRadius:
-        BorderRadius.circular(20),
-        border: Border.all(
-          color: const Color(0xFFFFE5A3),
-        ),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFDCE6F0)),
       ),
       child: Row(
         children: [
@@ -489,60 +502,51 @@ class _TripWorkspaceScreenState
             width: 45,
             height: 45,
             decoration: BoxDecoration(
-              color: Colors.white
-                  .withValues(alpha: 0.80),
-              shape: BoxShape.circle,
+              color: const Color(0xFFEAF4FF),
+              borderRadius: BorderRadius.circular(15),
             ),
             child: const Icon(
               Icons.auto_awesome_rounded,
-              color: Color(0xFFF2A900),
+              color: Color(0xFF1677FF),
               size: 22,
             ),
           ),
           const SizedBox(width: 13),
           Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
                     const Expanded(
                       child: Text(
-                        'Your trip is taking shape',
+                        'Planning progress',
                         style: TextStyle(
-                          color: Color(0xFF6B4F00),
+                          color: Color(0xFF102A43),
                           fontSize: 14,
-                          fontWeight:
-                          FontWeight.w900,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
                     ),
                     Text(
                       '$completedSteps/$totalSteps',
                       style: const TextStyle(
-                        color: Color(0xFF8A6800),
+                        color: Color(0xFF1677FF),
                         fontSize: 12,
-                        fontWeight:
-                        FontWeight.w900,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 ClipRRect(
-                  borderRadius:
-                  BorderRadius.circular(10),
-                  child:
-                  LinearProgressIndicator(
+                  borderRadius: BorderRadius.circular(10),
+                  child: LinearProgressIndicator(
                     value: progress,
                     minHeight: 6,
-                    backgroundColor:
-                    const Color(0xFFFFE8B0),
-                    valueColor:
-                    const AlwaysStoppedAnimation<
-                        Color>(
-                      Color(0xFFF2A900),
+                    backgroundColor: const Color(0xFFE5EDF5),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFF1677FF),
                     ),
                   ),
                 ),
@@ -552,7 +556,7 @@ class _TripWorkspaceScreenState
                       ? 'Great start! Explore the tools below to finish planning.'
                       : 'Choose a destination to continue building your trip.',
                   style: const TextStyle(
-                    color: Color(0xFF806B35),
+                    color: Color(0xFF627D98),
                     fontSize: 11,
                     height: 1.35,
                   ),
@@ -569,29 +573,22 @@ class _TripWorkspaceScreenState
   // SECTION HEADING
   // ------------------------------------------------------------
 
-  Widget _buildSectionHeading(
-      String title,
-      String subtitle,
-      ) {
+  Widget _buildSectionHeading(String title, String subtitle) {
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
           style: const TextStyle(
             color: Color(0xFF102A43),
-            fontSize: 21,
+            fontSize: 19,
             fontWeight: FontWeight.w900,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           subtitle,
-          style: const TextStyle(
-            color: Color(0xFF718096),
-            fontSize: 12.5,
-          ),
+          style: const TextStyle(color: Color(0xFF718096), fontSize: 12.5),
         ),
       ],
     );
@@ -602,80 +599,62 @@ class _TripWorkspaceScreenState
   // ------------------------------------------------------------
 
   Widget _buildPlanningGrid() {
-    return Column(
-      children: [
-        Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth < 460 ? 1 : 2;
+        final tileWidth = (constraints.maxWidth - (columns - 1) * 12) / columns;
+
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
           children: [
-            Expanded(
+            SizedBox(
+              width: tileWidth,
               child: _buildPlanningTile(
                 icon: Icons.explore_rounded,
                 title: 'Places',
-                subtitle: 'Discover',
+                subtitle: 'Discover points of interest',
                 color: const Color(0xFF1677FF),
-                background:
-                const Color(0xFFEAF4FF),
-                onTap: () {
-                  _openFeature(
-                    AppRoutes.touristSpots,
-                  );
-                },
+                background: const Color(0xFFEAF4FF),
+                onTap: () => _openFeature(AppRoutes.touristSpots),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
+            SizedBox(
+              width: tileWidth,
               child: _buildPlanningTile(
                 icon: Icons.hotel_rounded,
                 title: 'Stay',
-                subtitle: 'Hotels',
-                color: const Color(0xFF8B5CF6),
-                background:
-                const Color(0xFFF1ECFF),
-                onTap: () {
-                  _openFeature(
-                    AppRoutes.hotelSelection,
-                  );
-                },
+                subtitle: 'Find hotels and stays',
+                color: const Color(0xFF7257C7),
+                background: const Color(0xFFF1ECFF),
+                onTap: () => _openFeature(AppRoutes.hotelSelection),
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
+            SizedBox(
+              width: tileWidth,
               child: _buildPlanningTile(
                 icon: Icons.restaurant_rounded,
                 title: 'Food',
-                subtitle: 'Restaurants',
+                subtitle: 'Choose where to eat',
                 color: const Color(0xFFE07817),
-                background:
-                const Color(0xFFFFF2E6),
-                onTap: () {
-                  _openFeature(
-                    AppRoutes.restaurantSelection,
-                  );
-                },
+                background: const Color(0xFFFFF2E6),
+                onTap: () => _openFeature(AppRoutes.restaurantSelection),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
+            SizedBox(
+              width: tileWidth,
               child: _buildPlanningTile(
                 icon: Icons.directions_car_rounded,
                 title: 'Transport',
-                subtitle: 'Move around',
+                subtitle: 'Plan how to get around',
                 color: const Color(0xFF16805C),
-                background:
-                const Color(0xFFEAF8F2),
-                onTap: () {
-                  _openFeature(
-                    AppRoutes.transportSelection,
-                  );
-                },
+                background: const Color(0xFFEAF8F2),
+                onTap: () => _openFeature(AppRoutes.transportSelection),
               ),
             ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -688,63 +667,62 @@ class _TripWorkspaceScreenState
     required VoidCallback onTap,
   }) {
     return Material(
-      color: background,
-      borderRadius:
-      BorderRadius.circular(21),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-        BorderRadius.circular(21),
-        child: Container(
-          height: 112,
-          padding: const EdgeInsets.all(15),
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          height: 88,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            borderRadius:
-            BorderRadius.circular(21),
-            border: Border.all(
-              color: color.withValues(
-                alpha: 0.10,
-              ),
-            ),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE3E9F0)),
           ),
-          child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+          child: Row(
             children: [
               Container(
-                width: 39,
-                height: 39,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  color: Colors.white
-                      .withValues(alpha: 0.85),
-                  borderRadius:
-                  BorderRadius.circular(13),
+                  color: background,
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  icon,
-                  color: color,
-                  size: 21,
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Color(0xFF102A43),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF718096),
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const Spacer(),
-              Text(
-                title,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  color: color.withValues(
-                    alpha: 0.70,
-                  ),
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 14,
+                color: color.withValues(alpha: 0.75),
               ),
             ],
           ),
@@ -759,8 +737,7 @@ class _TripWorkspaceScreenState
 
   Widget _buildJourneySection() {
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionHeading(
           'Your journey',
@@ -770,47 +747,32 @@ class _TripWorkspaceScreenState
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius:
-            BorderRadius.circular(23),
-            border: Border.all(
-              color: const Color(0xFFE3E9F0),
-            ),
+            borderRadius: BorderRadius.circular(23),
+            border: Border.all(color: const Color(0xFFE3E9F0)),
           ),
           child: Column(
             children: [
               _buildJourneyRow(
                 icon: Icons.auto_awesome_rounded,
-                iconColor:
-                const Color(0xFF7257C7),
-                background:
-                const Color(0xFFF1ECFF),
+                iconColor: const Color(0xFF7257C7),
+                background: const Color(0xFFF1ECFF),
                 title: 'Itinerary',
-                subtitle:
-                'Build your day-by-day plan',
-                trailing:
-                'Plan days',
+                subtitle: 'Build your day-by-day plan',
+                trailing: 'Plan days',
                 onTap: () {
-                  _openFeature(
-                    AppRoutes.generateItinerary,
-                  );
+                  _openFeature(AppRoutes.generateItinerary);
                 },
               ),
               _journeyDivider(),
               _buildJourneyRow(
                 icon: Icons.alt_route_rounded,
-                iconColor:
-                const Color(0xFF1677FF),
-                background:
-                const Color(0xFFEAF4FF),
+                iconColor: const Color(0xFF1677FF),
+                background: const Color(0xFFEAF4FF),
                 title: 'Route & Map',
-                subtitle:
-                'Optimize stops and directions',
-                trailing:
-                'Open map',
+                subtitle: 'Optimize stops and directions',
+                trailing: 'Open map',
                 onTap: () {
-                  _openFeature(
-                    AppRoutes.mapNavigation,
-                  );
+                  _openFeature(AppRoutes.mapNavigation);
                 },
               ),
             ],
@@ -833,8 +795,7 @@ class _TripWorkspaceScreenState
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-        BorderRadius.circular(23),
+        borderRadius: BorderRadius.circular(23),
         child: Padding(
           padding: const EdgeInsets.all(15),
           child: Row(
@@ -844,37 +805,28 @@ class _TripWorkspaceScreenState
                 height: 47,
                 decoration: BoxDecoration(
                   color: background,
-                  borderRadius:
-                  BorderRadius.circular(15),
+                  borderRadius: BorderRadius.circular(15),
                 ),
-                child: Icon(
-                  icon,
-                  color: iconColor,
-                  size: 23,
-                ),
+                child: Icon(icon, color: iconColor, size: 23),
               ),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,
                       style: const TextStyle(
-                        color:
-                        Color(0xFF102A43),
+                        color: Color(0xFF102A43),
                         fontSize: 14,
-                        fontWeight:
-                        FontWeight.w900,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       subtitle,
                       style: const TextStyle(
-                        color:
-                        Color(0xFF7A8496),
+                        color: Color(0xFF7A8496),
                         fontSize: 11,
                       ),
                     ),
@@ -882,23 +834,17 @@ class _TripWorkspaceScreenState
                 ),
               ),
               Container(
-                padding:
-                const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 6,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
                 decoration: BoxDecoration(
                   color: background,
-                  borderRadius:
-                  BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   trailing,
                   style: TextStyle(
                     color: iconColor,
                     fontSize: 10,
-                    fontWeight:
-                    FontWeight.w800,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
@@ -917,14 +863,8 @@ class _TripWorkspaceScreenState
 
   Widget _journeyDivider() {
     return const Padding(
-      padding: EdgeInsets.only(
-        left: 75,
-        right: 15,
-      ),
-      child: Divider(
-        height: 1,
-        color: Color(0xFFEDF1F5),
-      ),
+      padding: EdgeInsets.only(left: 75, right: 15),
+      child: Divider(height: 1, color: Color(0xFFEDF1F5)),
     );
   }
 
@@ -934,8 +874,7 @@ class _TripWorkspaceScreenState
 
   Widget _buildPeopleMoneySection() {
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionHeading(
           'Travel together',
@@ -944,13 +883,9 @@ class _TripWorkspaceScreenState
         const SizedBox(height: 14),
         Row(
           children: [
-            Expanded(
-              child: _buildPeopleCard(),
-            ),
+            Expanded(child: _buildPeopleCard()),
             const SizedBox(width: 12),
-            Expanded(
-              child: _buildExpenseCard(),
-            ),
+            Expanded(child: _buildExpenseCard()),
           ],
         ),
       ],
@@ -959,40 +894,29 @@ class _TripWorkspaceScreenState
 
   Widget _buildPeopleCard() {
     return Material(
-      color: const Color(0xFFEAF8F2),
-      borderRadius:
-      BorderRadius.circular(21),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: () {
-          _openFeature(
-            AppRoutes.invitePeople,
-          );
+          _openFeature(AppRoutes.invitePeople);
         },
-        borderRadius:
-        BorderRadius.circular(21),
+        borderRadius: BorderRadius.circular(18),
         child: Container(
           height: 145,
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
-            borderRadius:
-            BorderRadius.circular(21),
-            border: Border.all(
-              color: const Color(0xFF16805C)
-                  .withValues(alpha: 0.10),
-            ),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE3E9F0)),
           ),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Colors.white
-                      .withValues(alpha: 0.85),
-                  borderRadius:
-                  BorderRadius.circular(13),
+                  color: const Color(0xFFEAF8F2),
+                  borderRadius: BorderRadius.circular(13),
                 ),
                 child: const Icon(
                   Icons.group_add_rounded,
@@ -1004,18 +928,15 @@ class _TripWorkspaceScreenState
               const Text(
                 'Invite Friends',
                 style: TextStyle(
-                  color: Color(0xFF126B4E),
+                  color: Color(0xFF102A43),
                   fontSize: 15,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 3),
               const Text(
                 'Plan together',
-                style: TextStyle(
-                  color: Color(0xFF5C8B7A),
-                  fontSize: 10.5,
-                ),
+                style: TextStyle(color: Color(0xFF718096), fontSize: 10.5),
               ),
             ],
           ),
@@ -1026,40 +947,29 @@ class _TripWorkspaceScreenState
 
   Widget _buildExpenseCard() {
     return Material(
-      color: const Color(0xFFFFF2E6),
-      borderRadius:
-      BorderRadius.circular(21),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: () {
-          _openFeature(
-            AppRoutes.expenseTracker,
-          );
+          _openFeature(AppRoutes.expenseTracker);
         },
-        borderRadius:
-        BorderRadius.circular(21),
+        borderRadius: BorderRadius.circular(18),
         child: Container(
           height: 145,
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
-            borderRadius:
-            BorderRadius.circular(21),
-            border: Border.all(
-              color: const Color(0xFFE07817)
-                  .withValues(alpha: 0.10),
-            ),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE3E9F0)),
           ),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Colors.white
-                      .withValues(alpha: 0.85),
-                  borderRadius:
-                  BorderRadius.circular(13),
+                  color: const Color(0xFFFFF2E6),
+                  borderRadius: BorderRadius.circular(13),
                 ),
                 child: const Icon(
                   Icons.account_balance_wallet_rounded,
@@ -1069,20 +979,17 @@ class _TripWorkspaceScreenState
               ),
               const Spacer(),
               const Text(
-                'Expenses',
+                'Split Expenses',
                 style: TextStyle(
-                  color: Color(0xFFB45D10),
+                  color: Color(0xFF102A43),
                   fontSize: 15,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 3),
               const Text(
-                'Track spending',
-                style: TextStyle(
-                  color: Color(0xFF9A7957),
-                  fontSize: 10.5,
-                ),
+                'Share costs & settle up',
+                style: TextStyle(color: Color(0xFF718096), fontSize: 10.5),
               ),
             ],
           ),
@@ -1098,25 +1005,18 @@ class _TripWorkspaceScreenState
   Widget _buildPreferencesTile() {
     return Material(
       color: Colors.transparent,
-      borderRadius:
-      BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: () {
-          _openFeature(
-            AppRoutes.selectPreferences,
-          );
+          _openFeature(AppRoutes.selectPreferences);
         },
-        borderRadius:
-        BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(18),
         child: Ink(
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
-            color: const Color(0xFFF1F4F9),
-            borderRadius:
-            BorderRadius.circular(18),
-            border: Border.all(
-              color: const Color(0xFFE2E8F0),
-            ),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
           child: Row(
             children: [
@@ -1125,8 +1025,7 @@ class _TripWorkspaceScreenState
                 height: 42,
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius:
-                  BorderRadius.circular(13),
+                  borderRadius: BorderRadius.circular(13),
                 ),
                 child: const Icon(
                   Icons.tune_rounded,
@@ -1137,25 +1036,21 @@ class _TripWorkspaceScreenState
               const SizedBox(width: 12),
               const Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Trip Preferences',
                       style: TextStyle(
-                        color:
-                        Color(0xFF102A43),
+                        color: Color(0xFF102A43),
                         fontSize: 13.5,
-                        fontWeight:
-                        FontWeight.w800,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     SizedBox(height: 3),
                     Text(
                       'Fine-tune what you want from your trip',
                       style: TextStyle(
-                        color:
-                        Color(0xFF7A8496),
+                        color: Color(0xFF7A8496),
                         fontSize: 10.5,
                       ),
                     ),
@@ -1180,8 +1075,7 @@ class _TripWorkspaceScreenState
 
   Widget _buildTripDetails(Trip trip) {
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionHeading(
           'Trip information',
@@ -1192,21 +1086,15 @@ class _TripWorkspaceScreenState
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius:
-            BorderRadius.circular(21),
-            border: Border.all(
-              color: const Color(0xFFE3E9F0),
-            ),
+            borderRadius: BorderRadius.circular(21),
+            border: Border.all(color: const Color(0xFFE3E9F0)),
           ),
           child: Column(
             children: [
               _detailRow(
-                icon:
-                Icons.my_location_rounded,
-                iconColor:
-                const Color(0xFF1677FF),
-                background:
-                const Color(0xFFEAF4FF),
+                icon: Icons.my_location_rounded,
+                iconColor: const Color(0xFF1677FF),
+                background: const Color(0xFFEAF4FF),
                 label: 'Starting from',
                 value: trip.startLocation,
               ),
@@ -1214,15 +1102,12 @@ class _TripWorkspaceScreenState
               _detailDivider(),
               const SizedBox(height: 13),
               _detailRow(
-                icon:
-                Icons.calendar_month_rounded,
-                iconColor:
-                const Color(0xFFE07817),
-                background:
-                const Color(0xFFFFF2E6),
+                icon: Icons.calendar_month_rounded,
+                iconColor: const Color(0xFFE07817),
+                background: const Color(0xFFFFF2E6),
                 label: 'Travel dates',
                 value:
-                '${_formatDate(trip.startDate)} - '
+                    '${_formatDate(trip.startDate)} - '
                     '${_formatDate(trip.endDate)}',
               ),
               const SizedBox(height: 13),
@@ -1272,20 +1157,14 @@ class _TripWorkspaceScreenState
           height: 42,
           decoration: BoxDecoration(
             color: background,
-            borderRadius:
-            BorderRadius.circular(13),
+            borderRadius: BorderRadius.circular(13),
           ),
-          child: Icon(
-            icon,
-            color: iconColor,
-            size: 20,
-          ),
+          child: Icon(icon, color: iconColor, size: 20),
         ),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 label,
@@ -1296,12 +1175,9 @@ class _TripWorkspaceScreenState
               ),
               const SizedBox(height: 3),
               Text(
-                value.isEmpty
-                    ? 'Not available'
-                    : value,
+                value.isEmpty ? 'Not available' : value,
                 maxLines: 2,
-                overflow:
-                TextOverflow.ellipsis,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Color(0xFF102A43),
                   fontSize: 13,
@@ -1316,51 +1192,41 @@ class _TripWorkspaceScreenState
   }
 
   Widget _miniDetail(
-      IconData icon,
-      String value,
-      String label,
-      Color color,
-      Color background,
-      ) {
+    IconData icon,
+    String value,
+    String label,
+    Color color,
+    Color background,
+  ) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: background,
-        borderRadius:
-        BorderRadius.circular(15),
+        borderRadius: BorderRadius.circular(15),
       ),
       child: Row(
         children: [
-          Icon(
-            icon,
-            color: color,
-            size: 18,
-          ),
+          Icon(icon, color: color, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   value,
                   maxLines: 1,
-                  overflow:
-                  TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: color,
                     fontSize: 12.5,
-                    fontWeight:
-                    FontWeight.w900,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   label,
                   style: TextStyle(
-                    color: color.withValues(
-                      alpha: 0.70,
-                    ),
+                    color: color.withValues(alpha: 0.70),
                     fontSize: 9.5,
                   ),
                 ),
@@ -1373,10 +1239,7 @@ class _TripWorkspaceScreenState
   }
 
   Widget _detailDivider() {
-    return const Divider(
-      height: 1,
-      color: Color(0xFFEDF1F5),
-    );
+    return const Divider(height: 1, color: Color(0xFFEDF1F5));
   }
 
   // ------------------------------------------------------------
@@ -1416,17 +1279,12 @@ class _TripWorkspaceScreenState
             Text(
               _error ?? 'Trip not found.',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFF718096),
-                fontSize: 13,
-              ),
+              style: const TextStyle(color: Color(0xFF718096), fontSize: 13),
             ),
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: _loadTrip,
-              icon: const Icon(
-                Icons.refresh_rounded,
-              ),
+              icon: const Icon(Icons.refresh_rounded),
               label: const Text('Retry'),
             ),
           ],
@@ -1454,18 +1312,13 @@ class _TripWorkspaceScreenState
       trip.endDate.day,
     );
 
-    final today = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    );
+    final today = DateTime(now.year, now.month, now.day);
 
     if (today.isAfter(end)) {
       return 'Completed';
     }
 
-    if (!today.isBefore(start) &&
-        !today.isAfter(end)) {
+    if (!today.isBefore(start) && !today.isAfter(end)) {
       return 'Ongoing';
     }
 
@@ -1476,33 +1329,19 @@ class _TripWorkspaceScreenState
     return 'Upcoming';
   }
 
-  Map<String, dynamic> _statusStyle(
-      String status,
-      ) {
+  Map<String, dynamic> _statusStyle(String status) {
     switch (status) {
       case 'Completed':
-        return {
-          'icon':
-          Icons.check_circle_rounded,
-        };
+        return {'icon': Icons.check_circle_rounded};
 
       case 'Ongoing':
-        return {
-          'icon':
-          Icons.flight_takeoff_rounded,
-        };
+        return {'icon': Icons.flight_takeoff_rounded};
 
       case 'Upcoming':
-        return {
-          'icon':
-          Icons.event_available_rounded,
-        };
+        return {'icon': Icons.event_available_rounded};
 
       default:
-        return {
-          'icon':
-          Icons.edit_calendar_rounded,
-        };
+        return {'icon': Icons.edit_calendar_rounded};
     }
   }
 

@@ -2,22 +2,19 @@ import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
 import '../../services/trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class TransportSelectionScreen extends StatefulWidget {
   final String tripId;
 
-  const TransportSelectionScreen({
-    super.key,
-    required this.tripId,
-  });
+  const TransportSelectionScreen({super.key, required this.tripId});
 
   @override
   State<TransportSelectionScreen> createState() =>
       _TransportSelectionScreenState();
 }
 
-class _TransportSelectionScreenState
-    extends State<TransportSelectionScreen> {
+class _TransportSelectionScreenState extends State<TransportSelectionScreen> {
   final TripService _tripService = TripService();
 
   int? _selectedIndex;
@@ -54,6 +51,12 @@ class _TransportSelectionScreenState
       'icon': Icons.directions_walk_rounded,
       'color': Color(0xFF1677FF),
     },
+    {
+      'type': 'Plane / Flight',
+      'description': 'Fly to or from your destination',
+      'icon': Icons.flight_rounded,
+      'color': Color(0xFF45A9FF),
+    },
   ];
 
   Future<void> _continue() async {
@@ -66,43 +69,28 @@ class _TransportSelectionScreenState
     });
 
     try {
-      final selectedTransport =
-      _options[_selectedIndex!];
+      final selectedTransport = _options[_selectedIndex!];
 
-      await _tripService.updateTrip(
-        widget.tripId,
-        {
-          'transportSelected': true,
-          'selectedTransport': {
-            'type': selectedTransport['type'],
-          },
-          'updatedAt':
-          DateTime.now().toIso8601String(),
-        },
-      );
+      await _tripService.updateTrip(widget.tripId, {
+        'transportSelected': true,
+        'selectedTransport': {'type': selectedTransport['type']},
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
 
       if (!mounted) return;
 
       Navigator.pushNamed(
         context,
         AppRoutes.mapNavigation,
-        arguments: {
-          'tripId': widget.tripId,
-        },
+        arguments: {'tripId': widget.tripId},
       );
     } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Could not save transportation: $e',
-          ),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.all(16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
+          content: Text('Could not save transportation: $e'),
+          behavior: SnackBarBehavior.fixed,
         ),
       );
     } finally {
@@ -130,17 +118,13 @@ class _TransportSelectionScreenState
             fontWeight: FontWeight.w800,
           ),
         ),
+        actions: const [DashboardNavigationButton()],
       ),
       body: Column(
         children: [
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                20,
-                20,
-                30,
-              ),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
               children: [
                 _buildHeader(),
                 const SizedBox(height: 24),
@@ -162,10 +146,7 @@ class _TransportSelectionScreenState
                   ),
                 ),
                 const SizedBox(height: 16),
-                ...List.generate(
-                  _options.length,
-                  _buildTransportCard,
-                ),
+                ...List.generate(_options.length, _buildTransportCard),
               ],
             ),
           ),
@@ -180,18 +161,14 @@ class _TransportSelectionScreenState
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFF1677FF),
-            Color(0xFF45A9FF),
-          ],
+          colors: [Color(0xFF1677FF), Color(0xFF45A9FF)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color:
-            const Color(0xFF1677FF).withOpacity(0.16),
+            color: const Color(0xFF1677FF).withOpacity(0.16),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -215,8 +192,7 @@ class _TransportSelectionScreenState
           const SizedBox(width: 15),
           const Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Choose your ride',
@@ -248,27 +224,21 @@ class _TransportSelectionScreenState
 
     final selected = _selectedIndex == index;
 
-    final color =
-    option['color'] as Color;
+    final color = option['color'] as Color;
 
     return AnimatedContainer(
-      duration:
-      const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 200),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: selected
-              ? color
-              : const Color(0xFFE6EDF3),
+          color: selected ? color : const Color(0xFFE6EDF3),
           width: selected ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(
-              selected ? 0.07 : 0.025,
-            ),
+            color: Colors.black.withOpacity(selected ? 0.07 : 0.025),
             blurRadius: selected ? 14 : 8,
             offset: const Offset(0, 4),
           ),
@@ -292,22 +262,18 @@ class _TransportSelectionScreenState
                   color: selected
                       ? color.withOpacity(0.12)
                       : const Color(0xFFF2F6FA),
-                  borderRadius:
-                  BorderRadius.circular(17),
+                  borderRadius: BorderRadius.circular(17),
                 ),
                 child: Icon(
                   option['icon'] as IconData,
-                  color: selected
-                      ? color
-                      : const Color(0xFF607D8B),
+                  color: selected ? color : const Color(0xFF607D8B),
                   size: 28,
                 ),
               ),
               const SizedBox(width: 15),
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       option['type'] as String,
@@ -319,8 +285,7 @@ class _TransportSelectionScreenState
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      option['description']
-                      as String,
+                      option['description'] as String,
                       style: TextStyle(
                         color: Colors.grey.shade600,
                         fontSize: 12.5,
@@ -331,24 +296,18 @@ class _TransportSelectionScreenState
               ),
               const SizedBox(width: 10),
               AnimatedContainer(
-                duration:
-                const Duration(milliseconds: 180),
+                duration: const Duration(milliseconds: 180),
                 height: 30,
                 width: 30,
                 decoration: BoxDecoration(
-                  color: selected
-                      ? color
-                      : const Color(0xFFF1F5F8),
+                  color: selected ? color : const Color(0xFFF1F5F8),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   selected
                       ? Icons.check_rounded
-                      : Icons
-                      .radio_button_unchecked_rounded,
-                  color: selected
-                      ? Colors.white
-                      : const Color(0xFF78909C),
+                      : Icons.radio_button_unchecked_rounded,
+                  color: selected ? Colors.white : const Color(0xFF78909C),
                   size: 18,
                 ),
               ),
@@ -360,17 +319,11 @@ class _TransportSelectionScreenState
   }
 
   Widget _buildBottomBar() {
-    final hasSelection =
-        _selectedIndex != null;
+    final hasSelection = _selectedIndex != null;
 
     return SafeArea(
       child: Container(
-        padding: const EdgeInsets.fromLTRB(
-          20,
-          12,
-          20,
-          16,
-        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
         decoration: BoxDecoration(
           color: Colors.white,
           boxShadow: [
@@ -398,8 +351,7 @@ class _TransportSelectionScreenState
                 const SizedBox(width: 8),
                 Text(
                   hasSelection
-                      ? _options[_selectedIndex!]['type']
-                  as String
+                      ? _options[_selectedIndex!]['type'] as String
                       : 'Select a transportation mode',
                   style: TextStyle(
                     color: hasSelection
@@ -416,51 +368,39 @@ class _TransportSelectionScreenState
               width: double.infinity,
               height: 54,
               child: ElevatedButton(
-                onPressed:
-                hasSelection && !_saving
-                    ? _continue
-                    : null,
+                onPressed: hasSelection && !_saving ? _continue : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                  const Color(0xFF1677FF),
+                  backgroundColor: const Color(0xFF1677FF),
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                  const Color(0xFFB8D6F7),
+                  disabledBackgroundColor: const Color(0xFFB8D6F7),
                   elevation: 0,
                   shape: RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(17),
+                    borderRadius: BorderRadius.circular(17),
                   ),
                 ),
                 child: _saving
                     ? const SizedBox(
-                  height: 22,
-                  width: 22,
-                  child:
-                  CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: Colors.white,
-                  ),
-                )
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
                     : const Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Continue to Route',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight:
-                        FontWeight.w800,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Continue to Route',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(Icons.arrow_forward_rounded, size: 20),
+                        ],
                       ),
-                    ),
-                    SizedBox(width: 8),
-                    Icon(
-                      Icons.arrow_forward_rounded,
-                      size: 20,
-                    ),
-                  ],
-                ),
               ),
             ),
           ],

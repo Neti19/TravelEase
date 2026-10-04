@@ -8,26 +8,21 @@ import '../../services/day_planner.dart';
 import '../../services/hotel_service.dart';
 import '../../services/trip_destination_service.dart';
 import '../../services/trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class HotelSelectionScreen extends StatefulWidget {
   final String tripId;
 
-  const HotelSelectionScreen({
-    super.key,
-    required this.tripId,
-  });
+  const HotelSelectionScreen({super.key, required this.tripId});
 
   @override
-  State<HotelSelectionScreen> createState() =>
-      _HotelSelectionScreenState();
+  State<HotelSelectionScreen> createState() => _HotelSelectionScreenState();
 }
 
-class _HotelSelectionScreenState
-    extends State<HotelSelectionScreen> {
+class _HotelSelectionScreenState extends State<HotelSelectionScreen> {
   final HotelService _hotelService = HotelService();
 
-  final TripDestinationService _destinationService =
-  TripDestinationService();
+  final TripDestinationService _destinationService = TripDestinationService();
 
   final TripService _tripService = TripService();
 
@@ -42,9 +37,13 @@ class _HotelSelectionScreenState
 
   // When true every day gets its own stay/hotel list.
   bool _separateHotels = false;
+  int _numberOfDays = 1;
+  int _selectedDay = 1;
 
   bool _loading = true;
   bool _saving = false;
+  String? _hotelLoadError;
+  String? _hotelLoadWarning;
 
   @override
   void initState() {
@@ -74,6 +73,9 @@ class _HotelSelectionScreenState
   }
 
   Future<void> _loadHotels() async {
+    _hotelLoadError = null;
+    _hotelLoadWarning = null;
+
     try {
       final trip = await _tripService.getTrip(widget.tripId);
 
@@ -88,8 +90,7 @@ class _HotelSelectionScreenState
 
       final tripData = rawSnapshot.data() ?? <String, dynamic>{};
 
-      final selectedPlaces =
-      await _destinationService.getSelectedPlaces(
+      final selectedPlaces = await _destinationService.getSelectedPlaces(
         widget.tripId,
       );
 
@@ -101,18 +102,26 @@ class _HotelSelectionScreenState
       }
 
       if (places.isEmpty) {
-        throw Exception(
-          'No tourist places selected.',
-        );
+        throw Exception('No tourist places selected.');
       }
 
       final days = trip.numberOfDays < 1 ? 1 : trip.numberOfDays;
+      final destinationLatitude =
+          (tripData['destinationLatitude'] as num?)?.toDouble();
+      final destinationLongitude =
+          (tripData['destinationLongitude'] as num?)?.toDouble();
+      final hasDestinationCoordinates =
+          destinationLatitude != null && destinationLongitude != null;
 
       final clusters = DayPlanner.clusterIntoDays(
         places: places,
         numberOfDays: days,
-        startLatitude: trip.startLatitude,
-        startLongitude: trip.startLongitude,
+        startLatitude: hasDestinationCoordinates
+            ? destinationLatitude
+            : trip.startLatitude,
+        startLongitude: hasDestinationCoordinates
+            ? destinationLongitude
+            : trip.startLongitude,
       );
 
       final groups = DayPlanner.buildStayGroups(
@@ -127,16 +136,13 @@ class _HotelSelectionScreenState
           : 0.0;
 
       // Choices the user already made (this session) or saved earlier.
-      final carry =
-      _stays.isEmpty ? null : _dayChoicesFromState();
-      final saved = HotelPlan.fromTrip(
-        tripData,
-        numberOfDays: days,
-      );
+      final carry = _stays.isEmpty ? null : _dayChoicesFromState();
+      final saved = HotelPlan.fromTrip(tripData, numberOfDays: days);
       final firstVisit = tripData['hotelSelected'] == null;
 
       final stays = <_StayOption>[];
       var failedStays = 0;
+      Object? firstSearchError;
 
       for (final group in groups) {
         var hotels = <Map<String, dynamic>>[];
@@ -145,21 +151,18 @@ class _HotelSelectionScreenState
           hotels = await _hotelService.recommendHotelsForStay(
             stay: group,
             maxBudgetPerNight: budgetPerNight,
-            travelers: trip.travelersCount < 1
-                ? 1
-                : trip.travelersCount,
+            travelers: trip.travelersCount < 1 ? 1 : trip.travelersCount,
           );
-        } catch (_) {
+        } catch (e) {
           failedStays++;
+          firstSearchError ??= e;
         }
 
         stays.add(_StayOption(stay: group, hotels: hotels));
       }
 
       if (failedStays == stays.length) {
-        throw Exception(
-          'Hotel search failed. Check your connection and Places API key.',
-        );
+        throw Exception('Hotel search failed: $firstSearchError');
       }
 
       final selection = <int, String>{};
@@ -175,18 +178,14 @@ class _HotelSelectionScreenState
 
         if (preferred != null && PlaceMap.id(preferred).isNotEmpty) {
           final id = PlaceMap.id(preferred);
-          final exists = stays[i].hotels.any(
-                (h) => PlaceMap.id(h) == id,
-          );
+          final exists = stays[i].hotels.any((h) => PlaceMap.id(h) == id);
           if (!exists) {
             // Keep an earlier choice visible even if it is no longer
             // among the fresh recommendations.
             stays[i].hotels.insert(0, preferred);
           }
           selection[i] = id;
-        } else if (firstVisit &&
-            carry == null &&
-            stays[i].hotels.isNotEmpty) {
+        } else if (firstVisit && carry == null && stays[i].hotels.isNotEmpty) {
           // First visit: pre-select the best match. The user can
           // change or deselect it.
           selection[i] = PlaceMap.id(stays[i].hotels.first);
@@ -196,13 +195,17 @@ class _HotelSelectionScreenState
       if (!mounted) return;
 
       setState(() {
+        _numberOfDays = days;
+        _selectedDay = _selectedDay.clamp(1, days);
         _stays = stays;
-        _hotels = [
-          for (final option in stays) ...option.hotels,
-        ];
+        _hotels = [for (final option in stays) ...option.hotels];
         _selectedByStay
           ..clear()
           ..addAll(selection);
+        _hotelLoadWarning = failedStays > 0
+            ? 'Some stay areas could not load hotel results: '
+                  '$firstSearchError'
+            : null;
         _loading = false;
       });
     } catch (e) {
@@ -210,11 +213,10 @@ class _HotelSelectionScreenState
 
       setState(() {
         _loading = false;
+        _hotelLoadError = e.toString();
       });
 
-      _showMessage(
-        'Could not load hotels: $e',
-      );
+      _showMessage('Could not load hotels: $e');
     }
   }
 
@@ -261,26 +263,19 @@ class _HotelSelectionScreenState
         'updatedAt': DateTime.now().toIso8601String(),
       };
 
-      await _tripService.updateTrip(
-        widget.tripId,
-        data,
-      );
+      await _tripService.updateTrip(widget.tripId, data);
 
       if (!mounted) return;
 
       Navigator.pushNamed(
         context,
         AppRoutes.restaurantSelection,
-        arguments: {
-          'tripId': widget.tripId,
-        },
+        arguments: {'tripId': widget.tripId},
       );
     } catch (e) {
       if (!mounted) return;
 
-      _showMessage(
-        'Could not save hotel selection: $e',
-      );
+      _showMessage('Could not save hotel selection: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -290,24 +285,16 @@ class _HotelSelectionScreenState
     }
   }
 
-  String _getName(
-      Map<String, dynamic> hotel,
-      ) {
-    final displayName =
-    hotel['displayName']
-    as Map<String, dynamic>?;
+  String _getName(Map<String, dynamic> hotel) {
+    final displayName = hotel['displayName'] as Map<String, dynamic>?;
 
-    return displayName?['text']
-        ?.toString() ??
+    return displayName?['text']?.toString() ??
         hotel['name']?.toString() ??
         'Hotel';
   }
 
-  String _getPrice(
-      Map<String, dynamic> hotel,
-      ) {
-    final price =
-    hotel['priceLevel']?.toString();
+  String _getPrice(Map<String, dynamic> hotel) {
+    final price = hotel['priceLevel']?.toString();
 
     switch (price) {
       case 'PRICE_LEVEL_INEXPENSIVE':
@@ -327,57 +314,36 @@ class _HotelSelectionScreenState
     }
   }
 
-  String _getAddress(
-      Map<String, dynamic> hotel,
-      ) {
-    return hotel['formattedAddress']
-        ?.toString() ??
+  String _getAddress(Map<String, dynamic> hotel) {
+    return hotel['formattedAddress']?.toString() ??
         hotel['address']?.toString() ??
         'Address unavailable';
   }
 
-  double _getRating(
-      Map<String, dynamic> hotel,
-      ) {
-    return (hotel['rating'] as num?)
-        ?.toDouble() ??
-        0;
+  double _getRating(Map<String, dynamic> hotel) {
+    return (hotel['rating'] as num?)?.toDouble() ?? 0;
   }
 
-  int _getReviewCount(
-      Map<String, dynamic> hotel,
-      ) {
-    return (hotel['userRatingCount'] as num?)
-        ?.toInt() ??
-        0;
+  int _getReviewCount(Map<String, dynamic> hotel) {
+    return (hotel['userRatingCount'] as num?)?.toInt() ?? 0;
   }
 
-  String _getNearPlace(
-      Map<String, dynamic> hotel,
-      ) {
-    return hotel['nearPlace']
-        ?.toString() ??
-        '';
+  String _getNearPlace(Map<String, dynamic> hotel) {
+    return hotel['nearPlace']?.toString() ?? '';
   }
 
-  IconData _getHotelIcon(
-      Map<String, dynamic> hotel,
-      ) {
-    final price =
-    hotel['priceLevel']?.toString();
+  IconData _getHotelIcon(Map<String, dynamic> hotel) {
+    final price = hotel['priceLevel']?.toString();
 
     switch (price) {
       case 'PRICE_LEVEL_VERY_EXPENSIVE':
-        return Icons
-            .workspace_premium_rounded;
+        return Icons.workspace_premium_rounded;
 
       case 'PRICE_LEVEL_EXPENSIVE':
-        return Icons
-            .hotel_rounded;
+        return Icons.hotel_rounded;
 
       default:
-        return Icons
-            .bed_rounded;
+        return Icons.bed_rounded;
     }
   }
 
@@ -414,16 +380,14 @@ class _HotelSelectionScreenState
   void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.fixed,
         ),
-      ),
-    );
+      );
   }
 
   @override
@@ -454,43 +418,46 @@ class _HotelSelectionScreenState
             fontWeight: FontWeight.w800,
           ),
         ),
+        actions: const [DashboardNavigationButton()],
       ),
       body: _loading
           ? _buildLoading()
           : _hotels.isEmpty
           ? _buildEmptyState()
           : Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                18,
-                20,
-                140,
-              ),
               children: [
-                _buildHeader(),
-                const SizedBox(height: 14),
-                _buildSplitToggle(),
-                const SizedBox(height: 18),
-                for (var i = 0; i < _stays.length; i++) ...[
-                  _buildStayHeader(_stays[i]),
-                  if (_stays[i].hotels.isEmpty)
-                    _buildNoHotelsForStay()
-                  else
-                    ..._stays[i].hotels.map(
-                          (hotel) => _buildHotelCard(hotel, i),
-                    ),
-                  const SizedBox(height: 6),
-                ],
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 140),
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 14),
+                      if (_hotelLoadWarning != null) ...[
+                        _buildHotelSearchWarning(_hotelLoadWarning!),
+                        const SizedBox(height: 14),
+                      ],
+                      _buildDaySelector(),
+                      const SizedBox(height: 14),
+                      _buildSplitToggle(),
+                      const SizedBox(height: 18),
+                      for (var i = 0; i < _stays.length; i++) ...[
+                        if (_stays[i].stay.dayNumbers.contains(_selectedDay)) ...[
+                        _buildStayHeader(_stays[i]),
+                        if (_stays[i].hotels.isEmpty)
+                          _buildNoHotelsForStay()
+                        else
+                          ..._stays[i].hotels.map(
+                            (hotel) => _buildHotelCard(hotel, i),
+                          ),
+                        const SizedBox(height: 6),
+                        ],
+                      ],
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar:
-      _loading || _hotels.isEmpty
+      bottomNavigationBar: _loading || _hotels.isEmpty
           ? null
           : _buildBottomBar(selectedHotel),
     );
@@ -499,16 +466,14 @@ class _HotelSelectionScreenState
   Widget _buildLoading() {
     return Center(
       child: Column(
-        mainAxisAlignment:
-        MainAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
             height: 70,
             width: 70,
             decoration: BoxDecoration(
               color: const Color(0xFFDFF4FF),
-              borderRadius:
-              BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(22),
             ),
             child: const Icon(
               Icons.hotel_rounded,
@@ -528,9 +493,7 @@ class _HotelSelectionScreenState
           const SizedBox(height: 8),
           Text(
             'Looking around your selected places',
-            style: TextStyle(
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(color: Colors.grey.shade600),
           ),
           const SizedBox(height: 20),
           const SizedBox(
@@ -546,41 +509,57 @@ class _HotelSelectionScreenState
     );
   }
 
+  Widget _buildHotelSearchWarning(String message) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF4C78A)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFE07817)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: Color(0xFF7A4B11), height: 1.35),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFF1677FF),
-            Color(0xFF45A9FF),
-          ],
+          colors: [Color(0xFF1677FF), Color(0xFF45A9FF)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius:
-        BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1677FF)
-                .withOpacity(0.16),
+            color: const Color(0xFF1677FF).withOpacity(0.16),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
         ],
       ),
       child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             height: 50,
             width: 50,
             decoration: BoxDecoration(
-              color: Colors.white
-                  .withOpacity(0.18),
-              borderRadius:
-              BorderRadius.circular(16),
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(
               Icons.hotel_rounded,
@@ -591,8 +570,7 @@ class _HotelSelectionScreenState
           const SizedBox(width: 14),
           const Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Where will you stay?',
@@ -619,73 +597,54 @@ class _HotelSelectionScreenState
     );
   }
 
-  Widget _buildHotelCard(
-      Map<String, dynamic> hotel,
-      int stayIndex,
-      ) {
+  Widget _buildHotelCard(Map<String, dynamic> hotel, int stayIndex) {
     final id = hotel['id']?.toString() ?? '';
 
-    final selected =
-        _selectedByStay[stayIndex] == id;
+    final selected = _selectedByStay[stayIndex] == id;
 
     final avgKm = (hotel['avgDistanceKm'] as num?)?.toDouble();
     final maxKm = (hotel['maxDistanceKm'] as num?)?.toDouble();
-    final perNight =
-    PlaceMap.estimatedHotelPerNight(hotel);
+    final perNight = PlaceMap.estimatedHotelPerNight(hotel);
     final recommended =
         _stays[stayIndex].hotels.isNotEmpty &&
-            PlaceMap.id(_stays[stayIndex].hotels.first) == id &&
-            hotel['recommendationScore'] != null;
+        PlaceMap.id(_stays[stayIndex].hotels.first) == id &&
+        hotel['recommendationScore'] != null;
 
     final name = _getName(hotel);
     final address = _getAddress(hotel);
     final rating = _getRating(hotel);
-    final reviewCount =
-    _getReviewCount(hotel);
-    final nearPlace =
-    _getNearPlace(hotel);
+    final reviewCount = _getReviewCount(hotel);
+    final nearPlace = _getNearPlace(hotel);
     final price = _getPrice(hotel);
 
     return AnimatedContainer(
-      duration:
-      const Duration(milliseconds: 220),
-      margin: const EdgeInsets.only(
-        bottom: 16,
-      ),
+      duration: const Duration(milliseconds: 220),
+      margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius:
-        BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: selected
-              ? const Color(0xFF1677FF)
-              : const Color(0xFFE6EDF3),
+          color: selected ? const Color(0xFF1677FF) : const Color(0xFFE6EDF3),
           width: selected ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black
-                .withOpacity(
-              selected ? 0.08 : 0.035,
-            ),
+            color: Colors.black.withOpacity(selected ? 0.08 : 0.035),
             blurRadius: selected ? 18 : 10,
             offset: const Offset(0, 5),
           ),
         ],
       ),
       child: InkWell(
-        borderRadius:
-        BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(22),
         onTap: () => _selectHotel(stayIndex, id),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
                     height: 62,
@@ -694,8 +653,7 @@ class _HotelSelectionScreenState
                       color: selected
                           ? const Color(0xFFDFF4FF)
                           : const Color(0xFFF2F7FB),
-                      borderRadius:
-                      BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(18),
                     ),
                     child: Icon(
                       _getHotelIcon(hotel),
@@ -708,20 +666,16 @@ class _HotelSelectionScreenState
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
-                      crossAxisAlignment:
-                      CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           name,
                           maxLines: 2,
-                          overflow:
-                          TextOverflow.ellipsis,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            color:
-                            Color(0xFF102A43),
+                            color: Color(0xFF102A43),
                             fontSize: 17,
-                            fontWeight:
-                            FontWeight.w800,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -729,35 +683,23 @@ class _HotelSelectionScreenState
                           children: [
                             const Icon(
                               Icons.star_rounded,
-                              color:
-                              Color(0xFFFFB703),
+                              color: Color(0xFFFFB703),
                               size: 18,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              rating > 0
-                                  ? rating
-                                  .toStringAsFixed(
-                                1,
-                              )
-                                  : 'N/A',
-                              style:
-                              const TextStyle(
-                                fontWeight:
-                                FontWeight.w700,
-                                color:
-                                Color(0xFF102A43),
+                              rating > 0 ? rating.toStringAsFixed(1) : 'N/A',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF102A43),
                               ),
                             ),
                             if (reviewCount > 0) ...[
                               const SizedBox(width: 4),
                               Text(
                                 '($reviewCount)',
-                                style:
-                                TextStyle(
-                                  color: Colors
-                                      .grey
-                                      .shade600,
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
                                   fontSize: 12,
                                 ),
                               ),
@@ -769,9 +711,7 @@ class _HotelSelectionScreenState
                   ),
                   const SizedBox(width: 8),
                   AnimatedContainer(
-                    duration: const Duration(
-                      milliseconds: 180,
-                    ),
+                    duration: const Duration(milliseconds: 180),
                     height: 34,
                     width: 34,
                     decoration: BoxDecoration(
@@ -783,13 +723,8 @@ class _HotelSelectionScreenState
                     child: Icon(
                       selected
                           ? Icons.check_rounded
-                          : Icons
-                          .radio_button_unchecked_rounded,
-                      color: selected
-                          ? Colors.white
-                          : const Color(
-                        0xFF78909C,
-                      ),
+                          : Icons.radio_button_unchecked_rounded,
+                      color: selected ? Colors.white : const Color(0xFF78909C),
                       size: 20,
                     ),
                   ),
@@ -797,8 +732,7 @@ class _HotelSelectionScreenState
               ),
               const SizedBox(height: 14),
               Row(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Icon(
                     Icons.location_on_outlined,
@@ -810,11 +744,9 @@ class _HotelSelectionScreenState
                     child: Text(
                       address,
                       maxLines: 2,
-                      overflow:
-                      TextOverflow.ellipsis,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color:
-                        Colors.grey.shade700,
+                        color: Colors.grey.shade700,
                         fontSize: 13,
                         height: 1.35,
                       ),
@@ -836,13 +768,11 @@ class _HotelSelectionScreenState
                       child: Text(
                         'Near $nearPlace',
                         maxLines: 1,
-                        overflow:
-                        TextOverflow.ellipsis,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Color(0xFF536B7A),
                           fontSize: 13,
-                          fontWeight:
-                          FontWeight.w600,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
@@ -865,13 +795,11 @@ class _HotelSelectionScreenState
                             ? '${avgKm.toStringAsFixed(1)} km from your places'
                             : '${avgKm.toStringAsFixed(1)} km avg \u00B7 ${maxKm.toStringAsFixed(1)} km max from this stay\'s places',
                         maxLines: 2,
-                        overflow:
-                        TextOverflow.ellipsis,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Color(0xFF536B7A),
                           fontSize: 13,
-                          fontWeight:
-                          FontWeight.w600,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
@@ -882,24 +810,20 @@ class _HotelSelectionScreenState
               Row(
                 children: [
                   Container(
-                    padding:
-                    const EdgeInsets.symmetric(
+                    padding: const EdgeInsets.symmetric(
                       horizontal: 11,
                       vertical: 7,
                     ),
                     decoration: BoxDecoration(
-                      color:
-                      const Color(0xFFFFF4E8),
-                      borderRadius:
-                      BorderRadius.circular(10),
+                      color: const Color(0xFFFFF4E8),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       '$price \u00B7 \u2248 \u20B9${perNight.round()}/night',
                       style: const TextStyle(
                         color: Color(0xFFE76F00),
                         fontSize: 12,
-                        fontWeight:
-                        FontWeight.w700,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
@@ -916,18 +840,13 @@ class _HotelSelectionScreenState
                     const SizedBox(width: 10),
                   ],
                   Text(
-                    selected
-                        ? 'Selected'
-                        : 'Tap to select',
+                    selected ? 'Selected' : 'Tap to select',
                     style: TextStyle(
                       color: selected
-                          ? const Color(
-                        0xFF1677FF,
-                      )
+                          ? const Color(0xFF1677FF)
                           : Colors.grey.shade600,
                       fontSize: 12,
-                      fontWeight:
-                      FontWeight.w700,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
@@ -941,16 +860,11 @@ class _HotelSelectionScreenState
 
   Widget _buildSplitToggle() {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 6,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFE6EDF3),
-        ),
+        border: Border.all(color: const Color(0xFFE6EDF3)),
       ),
       child: Row(
         children: [
@@ -962,8 +876,7 @@ class _HotelSelectionScreenState
           const SizedBox(width: 10),
           const Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Different hotel each day',
@@ -976,10 +889,7 @@ class _HotelSelectionScreenState
                 SizedBox(height: 2),
                 Text(
                   'Off: nearby days share one hotel',
-                  style: TextStyle(
-                    color: Color(0xFF78909C),
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Color(0xFF78909C), fontSize: 12),
                 ),
               ],
             ),
@@ -990,15 +900,66 @@ class _HotelSelectionScreenState
             onChanged: _loading
                 ? null
                 : (value) {
-              setState(() {
-                _separateHotels = value;
-                _loading = true;
-              });
-              _loadHotels();
-            },
+                    setState(() {
+                      _separateHotels = value;
+                      _loading = true;
+                    });
+                    _loadHotels();
+                  },
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDaySelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Hotel options for',
+          style: TextStyle(
+            color: Color(0xFF102A43),
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var day = 1; day <= _numberOfDays; day++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text('Day $day'),
+                    selected: _selectedDay == day,
+                    onSelected: (selected) {
+                      if (!selected) return;
+                      setState(() {
+                        _selectedDay = day;
+                      });
+                    },
+                    selectedColor: const Color(0xFFDFF4FF),
+                    labelStyle: TextStyle(
+                      color: _selectedDay == day
+                          ? const Color(0xFF1677FF)
+                          : const Color(0xFF536B7A),
+                      fontWeight: FontWeight.w700,
+                    ),
+                    side: BorderSide(
+                      color: _selectedDay == day
+                          ? const Color(0xFF1677FF)
+                          : const Color(0xFFE1EAF2),
+                    ),
+                    showCheckmark: false,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1006,23 +967,15 @@ class _HotelSelectionScreenState
     final stay = option.stay;
 
     return Padding(
-      padding: const EdgeInsets.only(
-        bottom: 12,
-        top: 4,
-      ),
+      padding: const EdgeInsets.only(bottom: 12, top: 4),
       child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 7,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               color: const Color(0xFFDFF4FF),
-              borderRadius:
-              BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               _dayLabel(stay),
@@ -1036,8 +989,7 @@ class _HotelSelectionScreenState
           const SizedBox(width: 10),
           Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Stay near ${_placesLabel(stay)}',
@@ -1052,10 +1004,7 @@ class _HotelSelectionScreenState
                 const SizedBox(height: 2),
                 Text(
                   '${_nightsLabel(stay)} \u00B7 same hotel for these days',
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                 ),
               ],
             ),
@@ -1072,49 +1021,33 @@ class _HotelSelectionScreenState
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFE6EDF3),
-        ),
+        border: Border.all(color: const Color(0xFFE6EDF3)),
       ),
       child: Text(
         'No hotels found near this area. You can continue without one.',
-        style: TextStyle(
-          color: Colors.grey.shade600,
-          fontSize: 13,
-        ),
+        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
       ),
     );
   }
 
-  Widget _buildBottomBar(
-      Map<String, dynamic>? selectedHotel,
-      ) {
-    final hasSelection =
-        _selectedByStay.isNotEmpty;
+  Widget _buildBottomBar(Map<String, dynamic>? selectedHotel) {
+    final hasSelection = _selectedByStay.isNotEmpty;
 
     return SafeArea(
       child: Container(
-        padding:
-        const EdgeInsets.fromLTRB(
-          20,
-          12,
-          20,
-          16,
-        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
         decoration: BoxDecoration(
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black
-                  .withOpacity(0.08),
+              color: Colors.black.withOpacity(0.08),
               blurRadius: 18,
               offset: const Offset(0, -5),
             ),
           ],
         ),
         child: Column(
-          mainAxisSize:
-          MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
@@ -1135,13 +1068,10 @@ class _HotelSelectionScreenState
                         : 'Hotel selection is optional',
                     style: TextStyle(
                       color: hasSelection
-                          ? const Color(
-                        0xFF102A43,
-                      )
+                          ? const Color(0xFF102A43)
                           : Colors.grey.shade700,
                       fontSize: 13,
-                      fontWeight:
-                      FontWeight.w600,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
@@ -1150,18 +1080,15 @@ class _HotelSelectionScreenState
             if (selectedHotel != null) ...[
               const SizedBox(height: 5),
               Align(
-                alignment:
-                Alignment.centerLeft,
+                alignment: Alignment.centerLeft,
                 child: Text(
                   _getName(selectedHotel),
                   maxLines: 1,
-                  overflow:
-                  TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Color(0xFF1677FF),
                     fontSize: 12,
-                    fontWeight:
-                    FontWeight.w700,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -1171,51 +1098,39 @@ class _HotelSelectionScreenState
               width: double.infinity,
               height: 54,
               child: ElevatedButton(
-                onPressed:
-                _saving ? null : _continue,
+                onPressed: _saving ? null : _continue,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                  const Color(0xFF1677FF),
+                  backgroundColor: const Color(0xFF1677FF),
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                  const Color(0xFFB8D6F7),
+                  disabledBackgroundColor: const Color(0xFFB8D6F7),
                   elevation: 0,
-                  shape:
-                  RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(17),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(17),
                   ),
                 ),
                 child: _saving
                     ? const SizedBox(
-                  height: 22,
-                  width: 22,
-                  child:
-                  CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: Colors.white,
-                  ),
-                )
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
                     : const Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Next: Restaurants',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight:
-                        FontWeight.w800,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Next: Restaurants',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(Icons.arrow_forward_rounded, size: 20),
+                        ],
                       ),
-                    ),
-                    SizedBox(width: 8),
-                    Icon(
-                      Icons
-                          .arrow_forward_rounded,
-                      size: 20,
-                    ),
-                  ],
-                ),
               ),
             ),
           ],
@@ -1225,21 +1140,22 @@ class _HotelSelectionScreenState
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
-          children: [
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(30),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
             Container(
               height: 86,
               width: 86,
               decoration: BoxDecoration(
                 color: const Color(0xFFDFF4FF),
-                borderRadius:
-                BorderRadius.circular(28),
+                borderRadius: BorderRadius.circular(28),
               ),
               child: const Icon(
                 Icons.hotel_outlined,
@@ -1248,10 +1164,12 @@ class _HotelSelectionScreenState
               ),
             ),
             const SizedBox(height: 20),
-            const Text(
-              'No hotels found',
+            Text(
+              _hotelLoadError == null
+                  ? 'No hotels found'
+                  : 'Hotel search failed',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Color(0xFF102A43),
                 fontSize: 21,
                 fontWeight: FontWeight.w800,
@@ -1259,12 +1177,10 @@ class _HotelSelectionScreenState
             ),
             const SizedBox(height: 8),
             Text(
-              'We could not find nearby stays for your selected places.',
+              _hotelLoadError ??
+                  'We could not find nearby stays for your selected places.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                height: 1.4,
-              ),
+              style: TextStyle(color: Colors.grey.shade600, height: 1.4),
             ),
             const SizedBox(height: 22),
             OutlinedButton.icon(
@@ -1274,32 +1190,41 @@ class _HotelSelectionScreenState
                 });
                 _loadHotels();
               },
-              icon: const Icon(
-                Icons.refresh_rounded,
-              ),
-              label: const Text(
-                'Try Again',
-              ),
-              style:
-              OutlinedButton.styleFrom(
-                foregroundColor:
-                const Color(0xFF1677FF),
-                side: const BorderSide(
-                  color: Color(0xFF1677FF),
-                ),
-                padding:
-                const EdgeInsets.symmetric(
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try Again'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1677FF),
+                side: const BorderSide(color: Color(0xFF1677FF)),
+                padding: const EdgeInsets.symmetric(
                   horizontal: 22,
                   vertical: 13,
                 ),
-                shape:
-                RoundedRectangleBorder(
-                  borderRadius:
-                  BorderRadius.circular(14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
             ),
-          ],
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: _saving ? null : _continue,
+              icon: const Icon(Icons.arrow_forward_rounded),
+              label: const Text('Continue without hotels'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1677FF),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 13,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1310,8 +1235,5 @@ class _StayOption {
   final StayGroup stay;
   final List<Map<String, dynamic>> hotels;
 
-  _StayOption({
-    required this.stay,
-    required this.hotels,
-  });
+  _StayOption({required this.stay, required this.hotels});
 }

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_routes.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class SelectPreferencesScreen extends StatefulWidget {
   final String tripId;
@@ -109,25 +110,26 @@ class _SelectPreferencesScreenState
         _loading = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showMessage('Could not load your previous choices.');
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
         SnackBar(
-          content: Text(
-            'Could not load your previous choices.',
-          ),
+          content: Text(message),
+          behavior: SnackBarBehavior.fixed,
         ),
       );
-    }
   }
 
   Future<void> _continue() async {
     if (_selectedPreferences.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Pick at least one experience you would love.',
-          ),
-        ),
-      );
+      _showMessage('Pick at least one experience you would love.');
       return;
     }
 
@@ -159,13 +161,7 @@ class _SelectPreferencesScreenState
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Something went wrong while saving your choices.',
-          ),
-        ),
-      );
+      _showMessage('Something went wrong while saving your choices.');
     } finally {
       if (mounted) {
         setState(() {
@@ -214,6 +210,7 @@ class _SelectPreferencesScreenState
             color: Color(0xFF102A43),
           ),
         ),
+        actions: const [DashboardNavigationButton()],
       ),
       body: SafeArea(
         child: Center(
@@ -388,7 +385,11 @@ class _SelectPreferencesScreenState
             crossAxisCount: columns,
             crossAxisSpacing: 14,
             mainAxisSpacing: 14,
-            childAspectRatio: columns == 2 ? 0.95 : 1.05,
+            childAspectRatio: columns == 2
+                ? 0.78
+                : columns == 3
+                ? 0.9
+                : 1.05,
           ),
           itemBuilder: (context, index) {
             return _buildPreferenceCard(

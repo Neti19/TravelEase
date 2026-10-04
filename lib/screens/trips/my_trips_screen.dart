@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../app_routes.dart';
 import '../../models/trip.dart';
 import '../../services/trip_service.dart';
+import '../../widgets/dashboard_navigation_button.dart';
 
 class MyTripsScreen extends StatefulWidget {
   const MyTripsScreen({super.key});
@@ -25,11 +26,18 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   String? _error;
 
   String _selectedFilter = 'All';
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadTrips();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   // ------------------------------------------------------------
@@ -52,10 +60,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
 
       if (user != null) {
         for (final trip in trips) {
-          ownership[trip.id] = await _isTripOwner(
-            trip.id,
-            user.uid,
-          );
+          ownership[trip.id] = await _isTripOwner(trip.id, user.uid);
         }
       }
 
@@ -82,14 +87,8 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   // CHECK OWNER
   // ------------------------------------------------------------
 
-  Future<bool> _isTripOwner(
-      String tripId,
-      String userId,
-      ) async {
-    final snapshot = await _firestore
-        .collection('trips')
-        .doc(tripId)
-        .get();
+  Future<bool> _isTripOwner(String tripId, String userId) async {
+    final snapshot = await _firestore.collection('trips').doc(tripId).get();
 
     if (!snapshot.exists) {
       return false;
@@ -105,11 +104,11 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   // ------------------------------------------------------------
 
   Future<void> _deleteTrip(Trip trip) async {
-    if (_ownership[trip.id] != true) {
+    if (!_canDeleteTrip(trip)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Only the trip owner can delete this trip.',
+            'Only the owner can delete a planning or upcoming trip.',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -124,13 +123,11 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         return AlertDialog(
           title: const Text(
             'Delete Trip?',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-            ),
+            style: TextStyle(fontWeight: FontWeight.w800),
           ),
           content: Text(
             'Are you sure you want to delete '
-                '"${trip.name.isEmpty ? trip.destination : trip.name}"?',
+            '"${trip.name.isEmpty ? trip.destination : trip.name}"?',
           ),
           actions: [
             TextButton(
@@ -163,9 +160,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       if (!mounted) return;
 
       setState(() {
-        _trips.removeWhere(
-              (item) => item.id == trip.id,
-        );
+        _trips.removeWhere((item) => item.id == trip.id);
 
         _ownership.remove(trip.id);
       });
@@ -188,6 +183,12 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     }
   }
 
+  bool _canDeleteTrip(Trip trip) {
+    final status = _tripStatus(trip);
+    return _ownership[trip.id] == true &&
+        (status == 'Planning' || status == 'Upcoming');
+  }
+
   // ------------------------------------------------------------
   // OPEN TRIP
   // ------------------------------------------------------------
@@ -200,10 +201,8 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     Navigator.pushNamed(
       context,
       AppRoutes.tripWorkspace,
-      arguments: {
-        'tripId': trip.id,
-      },
-    );
+      arguments: {'tripId': trip.id},
+    ).then((_) => _loadTrips());
   }
 
   // ------------------------------------------------------------
@@ -216,17 +215,10 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         return Container(
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            12,
-            20,
-            30,
-          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(30),
-            ),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -259,10 +251,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                 onTap: () {
                   Navigator.pop(sheetContext);
 
-                  Navigator.pushNamed(
-                    context,
-                    AppRoutes.tripDetails,
-                  ).then((_) {
+                  Navigator.pushNamed(context, AppRoutes.tripDetails).then((_) {
                     _loadTrips();
                   });
                 },
@@ -321,11 +310,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                   color: iconBackground,
                   borderRadius: BorderRadius.circular(15),
                 ),
-                child: Icon(
-                  icon,
-                  color: iconColor,
-                  size: 24,
-                ),
+                child: Icon(icon, color: iconColor, size: 24),
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -401,11 +386,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       trip.endDate.day,
     );
 
-    final today = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    );
+    final today = DateTime(now.year, now.month, now.day);
 
     if (today.isAfter(end)) {
       return 'Completed';
@@ -423,12 +404,17 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   }
 
   List<Trip> get _filteredTrips {
-    if (_selectedFilter == 'All') {
-      return _trips;
-    }
+    final query = _searchController.text.trim().toLowerCase();
 
     return _trips.where((trip) {
-      return _tripStatus(trip) == _selectedFilter;
+      final matchesStatus =
+          _selectedFilter == 'All' || _tripStatus(trip) == _selectedFilter;
+      final matchesSearch =
+          query.isEmpty ||
+          trip.name.toLowerCase().contains(query) ||
+          trip.destination.toLowerCase().contains(query);
+
+      return matchesStatus && matchesSearch;
     }).toList();
   }
 
@@ -447,18 +433,14 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         titleSpacing: 20,
         title: const Text(
           'My Trips',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 22,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
         ),
         actions: [
+          const DashboardNavigationButton(),
           IconButton(
             onPressed: _loadTrips,
             tooltip: 'Refresh',
-            icon: const Icon(
-              Icons.refresh_rounded,
-            ),
+            icon: const Icon(Icons.refresh_rounded),
           ),
           const SizedBox(width: 8),
         ],
@@ -472,9 +454,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         icon: const Icon(Icons.add_rounded),
         label: const Text(
           'Trip',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-          ),
+          style: TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
     );
@@ -487,9 +467,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF1677FF),
-        ),
+        child: CircularProgressIndicator(color: Color(0xFF1677FF)),
       );
     }
 
@@ -508,16 +486,15 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       onRefresh: _loadTrips,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(
-          20,
-          8,
-          20,
-          110,
-        ),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 110),
         children: [
           _buildIntro(),
 
           const SizedBox(height: 20),
+
+          _buildTripSearch(),
+
+          const SizedBox(height: 14),
 
           _buildFilters(),
 
@@ -527,14 +504,45 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             _buildFilterEmpty()
           else
             ...trips.map(
-                  (trip) => Padding(
-                padding: const EdgeInsets.only(
-                  bottom: 16,
-                ),
+              (trip) => Padding(
+                padding: const EdgeInsets.only(bottom: 16),
                 child: _buildTripCard(trip),
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTripSearch() {
+    return TextField(
+      controller: _searchController,
+      onChanged: (_) => setState(() {}),
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: 'Search trips by name or destination',
+        hintStyle: const TextStyle(color: Color(0xFF8290A3), fontSize: 13),
+        prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF627D98)),
+        suffixIcon: _searchController.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                onPressed: () {
+                  _searchController.clear();
+                },
+                icon: const Icon(Icons.close_rounded),
+              ),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(vertical: 15),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Color(0xFFE1E7EF)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Color(0xFF1677FF), width: 1.5),
+        ),
       ),
     );
   }
@@ -553,15 +561,10 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Color(0xFFEAF4FF),
-            Color(0xFFF3F9FF),
-          ],
+          colors: [Color(0xFFEAF4FF), Color(0xFFF3F9FF)],
         ),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: const Color(0xFFD7E9FF),
-        ),
+        border: Border.all(color: const Color(0xFFD7E9FF)),
       ),
       child: Row(
         children: [
@@ -573,8 +576,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               borderRadius: BorderRadius.circular(17),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF1677FF)
-                      .withValues(alpha: 0.10),
+                  color: const Color(0xFF1677FF).withValues(alpha: 0.10),
                   blurRadius: 14,
                   offset: const Offset(0, 6),
                 ),
@@ -604,7 +606,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                   upcomingCount == 0
                       ? 'Ready when you are for your next adventure.'
                       : '$upcomingCount active trip'
-                      '${upcomingCount == 1 ? '' : 's'} in your plans.',
+                            '${upcomingCount == 1 ? '' : 's'} in your plans.',
                   style: const TextStyle(
                     color: Color(0xFF627D98),
                     fontSize: 12.5,
@@ -620,13 +622,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   }
 
   Widget _buildFilters() {
-    final filters = [
-      'All',
-      'Planning',
-      'Upcoming',
-      'Ongoing',
-      'Completed',
-    ];
+    final filters = ['All', 'Planning', 'Upcoming', 'Ongoing', 'Completed'];
 
     return SizedBox(
       height: 39,
@@ -647,16 +643,10 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               });
             },
             child: AnimatedContainer(
-              duration: const Duration(
-                milliseconds: 180,
-              ),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-              ),
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
-                color: selected
-                    ? const Color(0xFF1677FF)
-                    : Colors.white,
+                color: selected ? const Color(0xFF1677FF) : Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                   color: selected
@@ -668,9 +658,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                 child: Text(
                   filter,
                   style: TextStyle(
-                    color: selected
-                        ? Colors.white
-                        : const Color(0xFF526071),
+                    color: selected ? Colors.white : const Color(0xFF526071),
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -692,15 +680,11 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         ? 'Destination not selected'
         : trip.destination.trim();
 
-    final title = trip.name.trim().isEmpty
-        ? destination
-        : trip.name.trim();
+    final title = trip.name.trim().isEmpty ? destination : trip.name.trim();
 
-    final isOwner = _ownership[trip.id] == true;
     final status = _tripStatus(trip);
 
-    final hasDestination =
-        trip.destination.trim().isNotEmpty;
+    final hasDestination = trip.destination.trim().isNotEmpty;
 
     final progress = hasDestination ? 0.45 : 0.18;
 
@@ -715,13 +699,10 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(25),
-            border: Border.all(
-              color: const Color(0xFFE4EAF1),
-            ),
+            border: Border.all(color: const Color(0xFFE4EAF1)),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF102A43)
-                    .withValues(alpha: 0.055),
+                color: const Color(0xFF102A43).withValues(alpha: 0.055),
                 blurRadius: 18,
                 offset: const Offset(0, 8),
               ),
@@ -736,36 +717,25 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               ),
 
               Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  18,
-                  17,
-                  18,
-                  16,
-                ),
+                padding: const EdgeInsets.fromLTRB(18, 17, 18, 16),
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      crossAxisAlignment:
-                      CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
                           child: Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 title,
                                 maxLines: 2,
-                                overflow:
-                                TextOverflow.ellipsis,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  color:
-                                  Color(0xFF102A43),
+                                  color: Color(0xFF102A43),
                                   fontSize: 19,
-                                  fontWeight:
-                                  FontWeight.w900,
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
                               const SizedBox(height: 6),
@@ -774,23 +744,18 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                                   const Icon(
                                     Icons.location_on_rounded,
                                     size: 15,
-                                    color:
-                                    Color(0xFF1677FF),
+                                    color: Color(0xFF1677FF),
                                   ),
                                   const SizedBox(width: 4),
                                   Expanded(
                                     child: Text(
                                       destination,
                                       maxLines: 1,
-                                      overflow:
-                                      TextOverflow
-                                          .ellipsis,
+                                      overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
-                                        color:
-                                        Color(0xFF627D98),
+                                        color: Color(0xFF627D98),
                                         fontSize: 12.5,
-                                        fontWeight:
-                                        FontWeight.w600,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   ),
@@ -799,20 +764,12 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        _buildTripMenu(
-                          trip: trip,
-                          isOwner: isOwner,
-                        ),
                       ],
                     ),
 
                     const SizedBox(height: 18),
 
-                    _buildRouteLine(
-                      trip: trip,
-                      destination: destination,
-                    ),
+                    _buildRouteLine(trip: trip, destination: destination),
 
                     const SizedBox(height: 18),
 
@@ -842,17 +799,10 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     final isOwner = _ownership[trip.id] == true;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(
-        18,
-        13,
-        14,
-        13,
-      ),
+      padding: const EdgeInsets.fromLTRB(18, 13, 14, 13),
       decoration: BoxDecoration(
         color: statusData['background'] as Color,
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(25),
-        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
       ),
       child: Row(
         children: [
@@ -872,22 +822,15 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
           ),
           const Spacer(),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 9,
-              vertical: 5,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(
-                alpha: 0.75,
-              ),
+              color: Colors.white.withValues(alpha: 0.75),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
               children: [
                 Icon(
-                  isOwner
-                      ? Icons.person_rounded
-                      : Icons.group_rounded,
+                  isOwner ? Icons.person_rounded : Icons.group_rounded,
                   size: 13,
                   color: isOwner
                       ? const Color(0xFF1677FF)
@@ -907,6 +850,32 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               ],
             ),
           ),
+          if (_canDeleteTrip(trip)) ...[
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 30,
+              child: FilledButton.icon(
+                onPressed: () => _deleteTrip(trip),
+                icon: const Icon(Icons.delete_outline_rounded, size: 14),
+                label: const Text('Delete'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFE5484D),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 9),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -944,57 +913,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     }
   }
 
-  Widget _buildTripMenu({
-    required Trip trip,
-    required bool isOwner,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4F7FA),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: PopupMenuButton<String>(
-        tooltip: 'Trip options',
-        padding: EdgeInsets.zero,
-        icon: const Icon(
-          Icons.more_horiz_rounded,
-          color: Color(0xFF627D98),
-        ),
-        onSelected: (value) {
-          if (value == 'delete') {
-            _deleteTrip(trip);
-          }
-        },
-        itemBuilder: (context) => [
-          PopupMenuItem<String>(
-            value: 'delete',
-            enabled: isOwner,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.delete_outline_rounded,
-                  color: isOwner
-                      ? const Color(0xFFE5484D)
-                      : const Color(0xFF9AA5B1),
-                ),
-                const SizedBox(width: 9),
-                Text(
-                  isOwner
-                      ? 'Delete trip'
-                      : 'Owner only',
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRouteLine({
-    required Trip trip,
-    required String destination,
-  }) {
+  Widget _buildRouteLine({required Trip trip, required String destination}) {
     final start = trip.startLocation.trim().isEmpty
         ? 'Starting point'
         : trip.startLocation.trim();
@@ -1016,15 +935,12 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                       height: 2,
                       decoration: BoxDecoration(
                         color: const Color(0xFFBBD8FF),
-                        borderRadius:
-                        BorderRadius.circular(2),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
                   ),
                   Container(
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                    ),
+                    margin: const EdgeInsets.symmetric(horizontal: 7),
                     padding: const EdgeInsets.all(5),
                     decoration: BoxDecoration(
                       color: const Color(0xFFEAF4FF),
@@ -1041,8 +957,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                       height: 2,
                       decoration: BoxDecoration(
                         color: const Color(0xFFBBD8FF),
-                        borderRadius:
-                        BorderRadius.circular(2),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
                   ),
@@ -1091,10 +1006,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     );
   }
 
-  Widget _routePoint({
-    required Color color,
-    required IconData icon,
-  }) {
+  Widget _routePoint({required Color color, required IconData icon}) {
     return Container(
       width: 31,
       height: 31,
@@ -1102,26 +1014,17 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         color: color.withValues(alpha: 0.11),
         shape: BoxShape.circle,
       ),
-      child: Icon(
-        icon,
-        size: 16,
-        color: color,
-      ),
+      child: Icon(icon, size: 16, color: color),
     );
   }
 
   Widget _buildTripStats(Trip trip) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 12,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: const Color(0xFFEDF1F5),
-        ),
+        border: Border.all(color: const Color(0xFFEDF1F5)),
       ),
       child: Row(
         children: [
@@ -1163,25 +1066,13 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   }
 
   Widget _statDivider() {
-    return Container(
-      width: 1,
-      height: 30,
-      color: const Color(0xFFE2E8F0),
-    );
+    return Container(width: 1, height: 30, color: const Color(0xFFE2E8F0));
   }
 
-  Widget _compactStat(
-      IconData icon,
-      String value,
-      String label,
-      ) {
+  Widget _compactStat(IconData icon, String value, String label) {
     return Column(
       children: [
-        Icon(
-          icon,
-          size: 16,
-          color: const Color(0xFF1677FF),
-        ),
+        Icon(icon, size: 16, color: const Color(0xFF1677FF)),
         const SizedBox(height: 5),
         Text(
           value,
@@ -1196,10 +1087,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         const SizedBox(height: 2),
         Text(
           label,
-          style: const TextStyle(
-            color: Color(0xFF8290A3),
-            fontSize: 9.5,
-          ),
+          style: const TextStyle(color: Color(0xFF8290A3), fontSize: 9.5),
         ),
       ],
     );
@@ -1244,10 +1132,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             value: progress,
             minHeight: 6,
             backgroundColor: const Color(0xFFE8EDF3),
-            valueColor:
-            const AlwaysStoppedAnimation<Color>(
-              Color(0xFF1677FF),
-            ),
+            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF1677FF)),
           ),
         ),
       ],
@@ -1259,14 +1144,14 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   // ------------------------------------------------------------
 
   Widget _buildFilterEmpty() {
+    final searching = _searchController.text.trim().isNotEmpty;
+
     return Container(
       padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: const Color(0xFFE3E9F0),
-        ),
+        border: Border.all(color: const Color(0xFFE3E9F0)),
       ),
       child: Column(
         children: [
@@ -1277,15 +1162,17 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               color: const Color(0xFFEAF4FF),
               borderRadius: BorderRadius.circular(20),
             ),
-            child: const Icon(
-              Icons.filter_alt_off_rounded,
-              color: Color(0xFF1677FF),
+            child: Icon(
+              searching
+                  ? Icons.search_off_rounded
+                  : Icons.filter_alt_off_rounded,
+              color: const Color(0xFF1677FF),
               size: 28,
             ),
           ),
           const SizedBox(height: 15),
-          const Text(
-            'No trips in this category',
+          Text(
+            searching ? 'No matching trips' : 'No trips in this category',
             style: TextStyle(
               color: Color(0xFF102A43),
               fontSize: 17,
@@ -1293,13 +1180,12 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             ),
           ),
           const SizedBox(height: 5),
-          const Text(
-            'Try another filter to see your trips.',
+          Text(
+            searching
+                ? 'Try a different name or destination, or clear your search.'
+                : 'Try another filter to see your trips.',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Color(0xFF718096),
-              fontSize: 12.5,
-            ),
+            style: TextStyle(color: Color(0xFF718096), fontSize: 12.5),
           ),
         ],
       ),
@@ -1339,7 +1225,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             const SizedBox(height: 9),
             const Text(
               'Create a trip or join one from a friend. '
-                  'Your adventures will live here.',
+              'Your adventures will live here.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Color(0xFF718096),
@@ -1351,8 +1237,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             FilledButton.icon(
               onPressed: _showTripActions,
               style: FilledButton.styleFrom(
-                backgroundColor:
-                const Color(0xFF1677FF),
+                backgroundColor: const Color(0xFF1677FF),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,
                   vertical: 13,
@@ -1364,9 +1249,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               icon: const Icon(Icons.add_rounded),
               label: const Text(
                 'Start a Trip',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
           ],
@@ -1408,17 +1291,12 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             Text(
               _error ?? 'Something went wrong.',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFF718096),
-                fontSize: 13,
-              ),
+              style: const TextStyle(color: Color(0xFF718096), fontSize: 13),
             ),
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: _loadTrips,
-              icon: const Icon(
-                Icons.refresh_rounded,
-              ),
+              icon: const Icon(Icons.refresh_rounded),
               label: const Text('Retry'),
             ),
           ],

@@ -37,6 +37,7 @@ class TravelEaseApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF7FAFC),
 
         fontFamily: 'Roboto',
+        fontFamilyFallback: const ['NotoEmoji'],
 
         appBarTheme: const AppBarTheme(
           elevation: 0,
